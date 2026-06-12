@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Próspera — CRM Multi-produto</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  html, body, #root { height: 100%; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; margin: 0; background: #fff; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef, useEffect } = React;
+
+/* ============================================================================
+   Próspera — CRM Multi-produto (arquivo HTML único, dados em memória)
+   Módulos independentes; cada um tem sua lista de clientes e seu esquema de
+   campos. Nativos: Benefícios, Adquirência. + Criador de módulos.
+============================================================================ */
+const PRIMARY = "#2563EB";
+
+const STATUSES = [
+  { key: "lead", label: "Lead", color: "#3B82F6", soft: "#EFF6FF", text: "#1D4ED8" },
+  { key: "negociacao", label: "Em negociação", color: "#F59E0B", soft: "#FFFBEB", text: "#B45309" },
+  { key: "fechado", label: "Fechado", color: "#10B981", soft: "#ECFDF5", text: "#047857" },
+  { key: "perdido", label: "Perdido", color: "#EF4444", soft: "#FEF2F2", text: "#B91C1C" },
+];
+const statusMeta = (k) => STATUSES.find((s) => s.key === k) || STATUSES[0];
+
+const ITEM_STATUS = [
+  { key: "interesse", label: "De interesse" },
+  { key: "contratado", label: "Contratado" },
+];
+
+const BRL = (v) => (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const onlyDigits = (s) => (s || "").replace(/\D/g, "");
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+const FIELD_TYPES = [
+  { key: "text", label: "Texto" },
+  { key: "number", label: "Número" },
+  { key: "currency", label: "Valor (R$)" },
+  { key: "status", label: "Status (interesse/contratado)" },
+];
+
+/* --------------------------- Ícones (SVG inline) -------------------------- */
+function Icon({ d, size = 20, stroke = "currentColor", fill = "none", children, className = "", paths }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      {paths ? paths.map((p, i) => <path key={i} d={p} />) : null}
+      {d ? <path d={d} /> : null}
+      {children}
+    </svg>
+  );
+}
+const I = {
+  Users: (p) => <Icon {...p} paths={["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2","M22 21v-2a4 4 0 0 0-3-3.87"]}><circle cx="9" cy="7" r="4"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>,
+  Trend: (p) => <Icon {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Icon>,
+  Check: (p) => <Icon {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>,
+  Handshake: (p) => <Icon {...p} paths={["m11 17 2 2a1 1 0 1 0 3-3","m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4","M21 3v9","M3 4h8","M3 9h7"]} />,
+  Search: (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>,
+  Plus: (p) => <Icon {...p}><path d="M5 12h14"/><path d="M12 5v14"/></Icon>,
+  Phone: (p) => <Icon {...p} d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z" />,
+  Mail: (p) => <Icon {...p}><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></Icon>,
+  Chat: (p) => <Icon {...p} d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z" />,
+  Building: (p) => <Icon {...p}><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></Icon>,
+  X: (p) => <Icon {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>,
+  Clock: (p) => <Icon {...p}><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6"/><circle cx="18" cy="18" r="4"/><path d="M15 3v4M3 10h7M18 16.5V18l1 1"/></Icon>,
+  Trash: (p) => <Icon {...p}><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>,
+  Dash: (p) => <Icon {...p}><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></Icon>,
+  Kanban: (p) => <Icon {...p}><path d="M6 5v11M12 5v6M18 5v14"/></Icon>,
+  Pencil: (p) => <Icon {...p} d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />,
+  Bell: (p) => <Icon {...p}><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></Icon>,
+  ChevR: (p) => <Icon {...p}><path d="m9 18 6-6-6-6"/></Icon>,
+  ChevD: (p) => <Icon {...p}><path d="m6 9 6 6 6-6"/></Icon>,
+  Grid: (p) => <Icon {...p}><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></Icon>,
+  Card: (p) => <Icon {...p}><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></Icon>,
+  Gift: (p) => <Icon {...p}><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8M16.5 8a2.5 2.5 0 0 0 0-5C9 3 12 8 12 8"/></Icon>,
+  Cog: (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>,
+};
+
+/* ----------------------------- MÓDULOS NATIVOS ---------------------------- */
+const benefitsModule = {
+  id: "beneficios", nome: "Benefícios", icon: "Gift", accent: "#2563EB",
+  itemLabel: "Benefício", itemLabelPlural: "Benefícios corporativos",
+  options: ["Plano de saúde", "Odontológico", "Vale-refeição/alimentação", "Seguro de vida", "Previdência", "Vale-transporte"],
+  fields: [
+    { id: "tipo", label: "Tipo", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "valor", label: "Valor anual", type: "currency" },
+  ],
+};
+
+const acquiringModule = {
+  id: "adquirencia", nome: "Adquirência", icon: "Card", accent: "#7C3AED",
+  itemLabel: "Produto", itemLabelPlural: "Produtos de adquirência",
+  options: ["Maquininha POS", "Pinpad / TEF", "Tap to Pay (celular)", "Gateway online", "Link de pagamento", "Antecipação de recebíveis"],
+  fields: [
+    { id: "tipo", label: "Produto", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "qtd", label: "Qtd. equipamentos", type: "number" },
+    { id: "modelo", label: "Modelo", type: "text" },
+    { id: "bandeiras", label: "Bandeiras", type: "text" },
+    { id: "tpv", label: "TPV mensal estimado", type: "currency" },
+    { id: "mdr_debito", label: "Taxa débito (%)", type: "number" },
+    { id: "mdr_credito", label: "Taxa crédito (%)", type: "number" },
+    { id: "taxa_pix", label: "Taxa Pix (%)", type: "number" },
+    { id: "antecipacao", label: "Antecipação (% a.m.)", type: "number" },
+  ],
+};
+
+/* -------------------------- DADOS-SEMENTE POR MÓDULO ---------------------- */
+const seedBeneficios = [
+  { id: uid(), nome: "Mariana Costa", telefone: "(11) 98888-1234", email: "mariana@techlog.com.br", empresa: "TechLog Soluções", status: "negociacao",
+    obs: "Empresa com 80 funcionários, busca pacote completo até o fim do trimestre.",
+    items: [
+      { id: uid(), tipo: "Plano de saúde", status: "interesse", valor: 18500 },
+      { id: uid(), tipo: "Odontológico", status: "interesse", valor: 2400 },
+    ],
+    tasks: [{ id: uid(), titulo: "Enviar proposta revisada", data: "2026-06-12", feito: false }] },
+  { id: uid(), nome: "Ricardo Alves", telefone: "(21) 97777-5678", email: "ricardo@nortemed.com", empresa: "NorteMed", status: "fechado",
+    obs: "Contrato assinado. Renovação anual em janeiro.",
+    items: [
+      { id: uid(), tipo: "Plano de saúde", status: "contratado", valor: 32000 },
+      { id: uid(), tipo: "Seguro de vida", status: "contratado", valor: 4800 },
+      { id: uid(), tipo: "Vale-refeição/alimentação", status: "contratado", valor: 9600 },
+    ],
+    tasks: [{ id: uid(), titulo: "Agendar reunião de pós-venda", data: "2026-06-20", feito: false }] },
+  { id: uid(), nome: "Juliana Prado", telefone: "(31) 96666-4321", email: "ju.prado@grupobravo.com.br", empresa: "Grupo Bravo", status: "lead",
+    obs: "Indicação de cliente. Primeiro contato pendente.",
+    items: [{ id: uid(), tipo: "Previdência", status: "interesse", valor: 0 }], tasks: [] },
+  { id: uid(), nome: "Fernando Lima", telefone: "(41) 95555-8765", email: "fernando@delta.ind.br", empresa: "Delta Indústria", status: "perdido",
+    obs: "Optou por concorrente por questão de preço.", items: [], tasks: [] },
+];
+
+const seedAdquirencia = [
+  { id: uid(), nome: "Patrícia Gomes", telefone: "(11) 91234-0001", email: "patricia@redeveloz.com.br", empresa: "Rede Veloz Varejo", status: "negociacao",
+    obs: "Rede com 12 lojas. Quer reduzir MDR e ter antecipação automática.",
+    items: [
+      { id: uid(), tipo: "Maquininha POS", status: "interesse", qtd: 24, modelo: "Smart POS A920", bandeiras: "Visa, Master, Elo", tpv: 480000, mdr_debito: 0.99, mdr_credito: 2.49, taxa_pix: 0.49, antecipacao: 1.8 },
+    ],
+    tasks: [{ id: uid(), titulo: "Simular taxas por loja", data: "2026-06-15", feito: false }] },
+  { id: uid(), nome: "André Souza", telefone: "(48) 99876-0002", email: "andre@cafedaesquina.com", empresa: "Café da Esquina", status: "fechado",
+    obs: "Microempreendedor, fechou com Tap to Pay no celular.",
+    items: [
+      { id: uid(), tipo: "Tap to Pay (celular)", status: "contratado", qtd: 2, modelo: "App Próspera Pay", bandeiras: "Visa, Master", tpv: 35000, mdr_debito: 1.29, mdr_credito: 3.19, taxa_pix: 0.99, antecipacao: 2.2 },
+    ],
+    tasks: [] },
+  { id: uid(), nome: "Loja Bella Moda", telefone: "(85) 98765-0003", email: "contato@bellamoda.com.br", empresa: "Bella Moda", status: "lead",
+    obs: "Indicação. Avaliando trocar de adquirente atual.",
+    items: [{ id: uid(), tipo: "Link de pagamento", status: "interesse", qtd: 0, modelo: "", bandeiras: "", tpv: 60000, mdr_debito: 0, mdr_credito: 0, taxa_pix: 0, antecipacao: 0 }], tasks: [] },
+];
+
+const initialModules = [
+  { ...benefitsModule, clients: seedBeneficios },
+  { ...acquiringModule, clients: seedAdquirencia },
+];
+
+/* ----------------------- PERSISTÊNCIA (localStorage) ----------------------
+   Os dados ficam salvos no navegador de cada pessoa, persistindo entre
+   recarregamentos. Não há compartilhamento entre máquinas (sem backend).
+   Ícones e funções dos módulos não são serializáveis; por isso salvamos
+   apenas os dados (nome, campos, opções, clientes) e reidratamos na carga.
+--------------------------------------------------------------------------- */
+const STORAGE_KEY = "prospera_crm_v2";
+
+function loadModules() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return initialModules;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return initialModules;
+    // garante que campos essenciais existam (defensivo contra versões antigas)
+    return parsed.map((m) => ({
+      icon: "Grid",
+      accent: "#2563EB",
+      options: [],
+      fields: [],
+      itemLabel: "Item",
+      itemLabelPlural: "Itens",
+      ...m,
+      clients: Array.isArray(m.clients) ? m.clients.map((c) => ({ items: [], tasks: [], ...c })) : [],
+    }));
+  } catch (e) {
+    console.warn("Falha ao carregar dados salvos; usando dados iniciais.", e);
+    return initialModules;
+  }
+}
+
+function saveModules(modules) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(modules));
+    return true;
+  } catch (e) {
+    console.warn("Não foi possível salvar localmente.", e);
+    return false;
+  }
+}
+
+function clearSavedModules() {
+  try { window.localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+}
+
+/* ------------------------------- small UI bits ---------------------------- */
+function Logo({ size = 28 }) {
+  return (
+    <div className="flex items-center gap-2 select-none">
+      <svg width={size} height={size * 0.58} viewBox="0 0 48 28" fill="none" aria-hidden="true">
+        <path d="M14 4C8 4 4 9 4 14s4 10 10 10c5 0 8-4 10-10C26 8 29 4 34 4c6 0 10 5 10 10s-4 10-10 10c-5 0-8-4-10-10"
+          stroke={PRIMARY} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span className="text-[22px] font-bold lowercase tracking-tight" style={{ color: PRIMARY }}>próspera</span>
+    </div>
+  );
+}
+function StatusBadge({ status }) {
+  const m = statusMeta(status);
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: m.soft, color: m.text }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.color }} />{m.label}
+    </span>
+  );
+}
+function Stat({ icon: IconC, label, value, accent }) {
+  return (
+    <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl" style={{ background: accent + "1A", color: accent }}>
+        <IconC size={22} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-2xl font-bold text-slate-900">{value}</div>
+        <div className="truncate text-sm text-slate-500">{label}</div>
+      </div>
+    </div>
+  );
+}
+function Field({ label, children }) {
+  return <label className="block"><span className="mb-1.5 block text-sm font-medium text-slate-700">{label}</span>{children}</label>;
+}
+const inputCls = "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 placeholder:text-slate-400";
+
+function fieldDefault(f) { return f.type === "status" ? "interesse" : (f.type === "number" || f.type === "currency") ? 0 : ""; }
+function newItem(mod) {
+  const it = { id: uid() };
+  mod.fields.forEach((f) => { it[f.id] = fieldDefault(f); });
+  const tf = mod.fields.find((f) => f.fromOptions);
+  if (tf && mod.options && mod.options.length) it[tf.id] = mod.options[0];
+  return it;
+}
+function itemTitle(mod, item) {
+  const tf = mod.fields.find((f) => f.fromOptions) || mod.fields.find((f) => f.type === "text");
+  return tf ? (item[tf.id] || mod.itemLabel) : mod.itemLabel;
+}
+function itemValue(mod, item) {
+  const cf = mod.fields.find((f) => f.type === "currency");
+  return cf ? (Number(item[cf.id]) || 0) : 0;
+}
+function clientValue(mod, c) { return c.items.reduce((s, it) => s + itemValue(mod, it), 0); }
+
+/* --------------------------------- App ------------------------------------ */
+function ProsperaCRM() {
+  const [modules, setModules] = useState(loadModules);
+  const [activeModId, setActiveModId] = useState(() => loadModules()[0].id);
+
+  // Salva no navegador sempre que os módulos mudam.
+  useEffect(() => { saveModules(modules); }, [modules]);
+
+  const resetData = () => {
+    if (confirm("Restaurar os dados de exemplo? Isso apaga tudo o que foi salvo neste navegador.")) {
+      clearSavedModules();
+      setModules(initialModules);
+      setActiveModId(initialModules[0].id);
+    }
+  };
+  const [view, setView] = useState("dashboard");
+  const [query, setQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState("todos");
+  const [openId, setOpenId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [moduleManagerOpen, setModuleManagerOpen] = useState(false);
+  const dragId = useRef(null);
+
+  const mod = modules.find((m) => m.id === activeModId) || modules[0];
+  const clients = mod.clients;
+  const openClient = clients.find((c) => c.id === openId) || null;
+
+  const setModuleClients = (updater) =>
+    setModules((ms) => ms.map((m) => (m.id === mod.id ? { ...m, clients: typeof updater === "function" ? updater(m.clients) : updater } : m)));
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return clients.filter((c) => {
+      const matchQ = !q || c.nome.toLowerCase().includes(q) || (c.empresa || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q);
+      const matchS = filterStatus === "todos" || c.status === filterStatus;
+      return matchQ && matchS;
+    });
+  }, [clients, query, filterStatus]);
+
+  const metrics = useMemo(() => {
+    const total = clients.length;
+    const byStatus = Object.fromEntries(STATUSES.map((s) => [s.key, 0]));
+    clients.forEach((c) => (byStatus[c.status] = (byStatus[c.status] || 0) + 1));
+    const decididos = byStatus.fechado + byStatus.perdido;
+    const conv = decididos ? Math.round((byStatus.fechado / decididos) * 100) : 0;
+    const receita = clients.filter((c) => c.status === "fechado").reduce((sum, c) =>
+      sum + c.items.filter((it) => it.status === "contratado" || !("status" in it)).reduce((s, it) => s + itemValue(mod, it), 0), 0);
+    return { total, byStatus, conv, receita };
+  }, [clients, mod]);
+
+  const upcomingTasks = useMemo(() => {
+    const list = [];
+    clients.forEach((c) => (c.tasks || []).forEach((t) => !t.feito && list.push({ ...t, cliente: c.nome, clientId: c.id })));
+    return list.sort((a, b) => (a.data || "").localeCompare(b.data || "")).slice(0, 6);
+  }, [clients]);
+
+  const saveClient = (data) => {
+    if (data.id) setModuleClients((cs) => cs.map((c) => (c.id === data.id ? { ...c, ...data } : c)));
+    else setModuleClients((cs) => [...cs, { ...data, id: uid(), items: data.items || [], tasks: data.tasks || [] }]);
+    setFormOpen(false); setEditing(null);
+  };
+  const removeClient = (id) => { setModuleClients((cs) => cs.filter((c) => c.id !== id)); if (openId === id) setOpenId(null); };
+  const moveClient = (id, status) => setModuleClients((cs) => cs.map((c) => (c.id === id ? { ...c, status } : c)));
+  const patchClient = (id, patch) => setModuleClients((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const onDrop = (status) => { if (dragId.current) { moveClient(dragId.current, status); dragId.current = null; } };
+
+  const addModule = (newMod) => {
+    setModules((ms) => [...ms, { ...newMod, clients: [] }]);
+    setActiveModId(newMod.id); setModuleManagerOpen(false); setView("dashboard");
+  };
+  const deleteModule = (id) => {
+    setModules((ms) => {
+      const left = ms.filter((m) => m.id !== id);
+      if (left.length === 0) return ms;
+      if (id === activeModId) setActiveModId(left[0].id);
+      return left;
+    });
+  };
+  const switchModule = (id) => { setActiveModId(id); setOpenId(null); setQuery(""); setFilterStatus("todos"); };
+
+  return (
+    <div className="min-h-screen bg-white text-slate-900">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
+          <Logo />
+          <ModuleSwitcher modules={modules} activeId={mod.id} onSwitch={switchModule} onManage={() => setModuleManagerOpen(true)} />
+          <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 lg:inline-flex" title="Seus dados são salvos automaticamente neste navegador">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Salvo neste navegador
+          </span>
+          <nav className="ml-auto flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+            <TabBtn active={view === "dashboard"} onClick={() => setView("dashboard")} icon={I.Dash}>Painel</TabBtn>
+            <TabBtn active={view === "funil"} onClick={() => setView("funil")} icon={I.Kanban}>Funil</TabBtn>
+          </nav>
+          <button onClick={() => { setEditing(null); setFormOpen(true); }}
+            className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110" style={{ background: mod.accent }}>
+            <I.Plus size={18} /> Novo cliente
+          </button>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        <div className="mb-6 flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[220px] flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><I.Search size={18} /></span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, empresa ou e-mail" className={inputCls + " pl-10"} />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <FilterChip active={filterStatus === "todos"} onClick={() => setFilterStatus("todos")}>Todos</FilterChip>
+            {STATUSES.map((s) => (
+              <FilterChip key={s.key} active={filterStatus === s.key} onClick={() => setFilterStatus(s.key)} color={s.color}>{s.label}</FilterChip>
+            ))}
+          </div>
+        </div>
+
+        {view === "dashboard"
+          ? <Dashboard mod={mod} metrics={metrics} clients={filtered} upcomingTasks={upcomingTasks} onOpen={setOpenId} />
+          : <Funnel mod={mod} clients={filtered} onOpen={setOpenId} dragId={dragId} onDrop={onDrop} />}
+      </main>
+
+      {openClient && (
+        <ClientDrawer mod={mod} client={openClient} onClose={() => setOpenId(null)}
+          onEdit={() => { setEditing(openClient); setFormOpen(true); }}
+          onDelete={() => removeClient(openClient.id)}
+          patch={(p) => patchClient(openClient.id, p)} changeStatus={(s) => moveClient(openClient.id, s)} />
+      )}
+      {formOpen && (
+        <ClientForm mod={mod} initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSave={saveClient} />
+      )}
+      {moduleManagerOpen && (
+        <ModuleManager modules={modules} onClose={() => setModuleManagerOpen(false)} onAdd={addModule} onDelete={deleteModule} onReset={resetData} />
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- Module switcher ------------------------------ */
+function ModuleSwitcher({ modules, activeId, onSwitch, onManage }) {
+  const [open, setOpen] = useState(false);
+  const active = modules.find((m) => m.id === activeId);
+  const IconC = I[active.icon] || I.Grid;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300">
+        <span className="flex h-6 w-6 items-center justify-center rounded-lg text-white" style={{ background: active.accent }}><IconC size={14} /></span>
+        {active.nome}
+        <span className="text-slate-400"><I.ChevD size={15} /></span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 z-20 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">Módulos de produto</div>
+            {modules.map((m) => {
+              const MIcon = I[m.icon] || I.Grid;
+              return (
+                <button key={m.id} onClick={() => { onSwitch(m.id); setOpen(false); }}
+                  className={"flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition hover:bg-slate-50 " + (m.id === activeId ? "bg-slate-50 font-semibold" : "")}>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg text-white" style={{ background: m.accent }}><MIcon size={15} /></span>
+                  <span className="flex-1 truncate text-slate-800">{m.nome}</span>
+                  <span className="text-xs text-slate-400">{m.clients.length}</span>
+                </button>
+              );
+            })}
+            <div className="my-1.5 border-t border-slate-100" />
+            <button onClick={() => { onManage(); setOpen(false); }}
+              className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-100 text-blue-700"><I.Cog size={15} /></span>
+              Gerenciar módulos
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------ Nav helpers ------------------------------- */
+function TabBtn({ active, onClick, icon: IconC, children }) {
+  return (
+    <button onClick={onClick}
+      className={"inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition " + (active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
+      <IconC size={17} /> {children}
+    </button>
+  );
+}
+function FilterChip({ active, onClick, color, children }) {
+  return (
+    <button onClick={onClick}
+      className={"inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition " + (active ? "border-transparent text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")}
+      style={active ? { background: color || PRIMARY } : undefined}>
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------- Dashboard -------------------------------- */
+function Dashboard({ mod, metrics, clients, upcomingTasks, onOpen }) {
+  const MIcon = I[mod.icon] || I.Grid;
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat icon={I.Users} label={"Total em " + mod.nome} value={metrics.total} accent={mod.accent} />
+        <Stat icon={I.Trend} label="Taxa de conversão" value={metrics.conv + "%"} accent="#10B981" />
+        <Stat icon={I.Handshake} label="Negócios fechados" value={metrics.byStatus.fechado} accent="#0EA5E9" />
+        <Stat icon={MIcon} label="Receita contratada" value={BRL(metrics.receita)} accent="#8B5CF6" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 lg:col-span-2">
+          <h2 className="mb-4 text-base font-semibold text-slate-900">Negócios por status</h2>
+          <div className="space-y-3">
+            {STATUSES.map((s) => {
+              const n = metrics.byStatus[s.key] || 0;
+              const pct = metrics.total ? (n / metrics.total) * 100 : 0;
+              return (
+                <div key={s.key}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2 font-medium text-slate-700">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />{s.label}
+                    </span>
+                    <span className="tabular-nums text-slate-500">{n}</span>
+                  </div>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-full rounded-full transition-all" style={{ width: pct + "%", background: s.color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-slate-900">
+            <span style={{ color: mod.accent }}><I.Bell size={18} /></span> Próximos follow-ups
+          </h2>
+          {upcomingTasks.length === 0 ? (
+            <p className="text-sm text-slate-400">Nenhum lembrete agendado. Adicione um no card do cliente.</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {upcomingTasks.map((t) => (
+                <li key={t.id}>
+                  <button onClick={() => onOpen(t.clientId)}
+                    className="flex w-full items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-left transition hover:border-blue-200 hover:bg-blue-50">
+                    <span className="shrink-0 text-slate-400"><I.Clock size={18} /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-slate-800">{t.titulo}</span>
+                      <span className="block text-xs text-slate-500">{t.cliente} · {fmtDate(t.data)}</span>
+                    </span>
+                    <span className="shrink-0 text-slate-300"><I.ChevR size={16} /></span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <h2 className="text-base font-semibold text-slate-900">Clientes <span className="text-slate-400">({clients.length})</span></h2>
+        </div>
+        {clients.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-slate-400">Nenhum cliente neste módulo. Cadastre um novo cliente.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {clients.map((c) => (
+              <li key={c.id}>
+                <button onClick={() => onOpen(c.id)} className="flex w-full items-center gap-4 px-5 py-4 text-left transition hover:bg-slate-50">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white" style={{ background: mod.accent }}>{initials(c.nome)}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-slate-900">{c.nome}</div>
+                    <div className="flex items-center gap-1.5 truncate text-sm text-slate-500"><I.Building size={13} /> {c.empresa || "—"}</div>
+                  </div>
+                  <div className="hidden text-sm text-slate-500 sm:block">{c.telefone}</div>
+                  <StatusBadge status={c.status} />
+                  <span className="text-slate-300"><I.ChevR size={18} /></span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------------- Funnel --------------------------------- */
+function Funnel({ mod, clients, onOpen, dragId, onDrop }) {
+  const [over, setOver] = useState(null);
+  const [grabbing, setGrabbing] = useState(null);
+  const totalPipeline = clients.reduce((s, c) => s + clientValue(mod, c), 0);
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-white px-5 py-3.5 text-sm">
+        <span className="font-semibold text-slate-900">Funil · {mod.nome}</span>
+        <span className="text-slate-500">{clients.length} {clients.length === 1 ? "cliente" : "clientes"}</span>
+        <span className="text-slate-500">Valor total em pipeline: <span className="font-semibold text-slate-800">{BRL(totalPipeline)}</span></span>
+        <span className="ml-auto hidden items-center gap-1.5 text-xs text-slate-400 sm:flex">Arraste os cards entre as colunas para mudar o status</span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {STATUSES.map((s) => {
+          const cards = clients.filter((c) => c.status === s.key);
+          const colTotal = cards.reduce((sum, c) => sum + clientValue(mod, c), 0);
+          return (
+            <div key={s.key}
+              onDragOver={(e) => { e.preventDefault(); setOver(s.key); }}
+              onDragLeave={() => setOver((o) => (o === s.key ? null : o))}
+              onDrop={() => { onDrop(s.key); setOver(null); setGrabbing(null); }}
+              className={"flex max-h-[72vh] flex-col rounded-2xl border transition " + (over === s.key && grabbing ? "border-blue-400 bg-blue-50/70 ring-2 ring-blue-100" : "border-slate-200 bg-slate-50/60")}>
+              <div className="border-b border-slate-200/70 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />{s.label}
+                  </span>
+                  <span className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ background: s.soft, color: s.text }}>{cards.length}</span>
+                </div>
+                <div className="mt-1 text-xs text-slate-400">{BRL(colTotal)}</div>
+              </div>
+              <div className="flex min-h-[120px] flex-1 flex-col gap-2.5 overflow-y-auto px-3 py-3">
+                {cards.map((c) => {
+                  const pend = (c.tasks || []).filter((t) => !t.feito).length;
+                  const val = clientValue(mod, c);
+                  return (
+                    <article key={c.id} draggable
+                      onDragStart={() => { dragId.current = c.id; setGrabbing(c.id); }}
+                      onDragEnd={() => { setGrabbing(null); setOver(null); }}
+                      onClick={() => onOpen(c.id)}
+                      className={"cursor-grab rounded-xl border bg-white p-3.5 transition hover:border-blue-300 hover:shadow-sm active:cursor-grabbing " + (grabbing === c.id ? "border-blue-400 opacity-60 shadow-md" : "border-slate-200")}>
+                      <div className="flex items-start gap-2.5">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: s.color }}>{initials(c.nome)}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-slate-900">{c.nome}</div>
+                          <div className="truncate text-xs text-slate-500">{c.empresa || "—"}</div>
+                        </div>
+                      </div>
+                      {c.items.length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-1">
+                          {c.items.slice(0, 3).map((it) => (
+                            <span key={it.id} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">{itemTitle(mod, it)}</span>
+                          ))}
+                          {c.items.length > 3 && <span className="self-center text-[11px] text-slate-400">+{c.items.length - 3}</span>}
+                        </div>
+                      )}
+                      {(val > 0 || pend > 0) && (
+                        <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+                          <span className="font-semibold tabular-nums text-slate-600">{val > 0 ? BRL(val) : ""}</span>
+                          {pend > 0 && <span className="inline-flex items-center gap-1 text-amber-600"><I.Bell size={12} /> {pend} {pend === 1 ? "tarefa" : "tarefas"}</span>}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+                {cards.length === 0 && (
+                  <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 py-6 text-xs text-slate-400">Arraste cards para cá</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ Client drawer ----------------------------- */
+function ClientDrawer({ mod, client, onClose, onEdit, onDelete, patch, changeStatus }) {
+  const [draft, setDraft] = useState(() => newItem(mod));
+  const [taskDraft, setTaskDraft] = useState({ titulo: "", data: "" });
+
+  const hasStatus = mod.fields.some((f) => f.type === "status");
+  const totalInteresse = client.items.filter((it) => !hasStatus || it.status === "interesse").reduce((s, it) => s + itemValue(mod, it), 0);
+  const totalContratado = client.items.filter((it) => it.status === "contratado").reduce((s, it) => s + itemValue(mod, it), 0);
+
+  const waLink = "https://wa.me/55" + onlyDigits(client.telefone) + "?text=" + encodeURIComponent("Olá " + client.nome.split(" ")[0] + ", aqui é da Próspera.");
+  const mailLink = "mailto:" + client.email + "?subject=" + encodeURIComponent("Próspera — " + mod.nome) + "&body=" + encodeURIComponent("Olá " + client.nome.split(" ")[0] + ",\n\n");
+
+  const addItem = () => { patch({ items: [...client.items, { ...draft, id: uid() }] }); setDraft(newItem(mod)); };
+  const removeItem = (id) => patch({ items: client.items.filter((it) => it.id !== id) });
+  const toggleItemStatus = (id) => patch({ items: client.items.map((it) => it.id === id ? { ...it, status: it.status === "interesse" ? "contratado" : "interesse" } : it) });
+
+  const addTask = () => {
+    if (!taskDraft.titulo.trim()) return;
+    patch({ tasks: [...(client.tasks || []), { id: uid(), titulo: taskDraft.titulo.trim(), data: taskDraft.data, feito: false }] });
+    setTaskDraft({ titulo: "", data: "" });
+  };
+  const toggleTask = (id) => patch({ tasks: client.tasks.map((t) => t.id === id ? { ...t, feito: !t.feito } : t) });
+  const removeTask = (id) => patch({ tasks: client.tasks.filter((t) => t.id !== id) });
+  const setDraftField = (fid, val) => setDraft((d) => ({ ...d, [fid]: val }));
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative flex h-full w-full max-w-xl flex-col bg-white shadow-2xl">
+        <div className="flex items-start gap-3 border-b border-slate-100 px-6 py-5">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-base font-bold text-white" style={{ background: mod.accent }}>{initials(client.nome)}</div>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-lg font-bold text-slate-900">{client.nome}</h2>
+            <p className="flex items-center gap-1.5 truncate text-sm text-slate-500"><I.Building size={14} /> {client.empresa || "—"} · {mod.nome}</p>
+          </div>
+          <div className="flex items-center gap-1">
+            <IconBtn title="Editar" onClick={onEdit}><I.Pencil size={18} /></IconBtn>
+            <IconBtn title="Excluir" onClick={onDelete} danger><I.Trash size={18} /></IconBtn>
+            <IconBtn title="Fechar" onClick={onClose}><I.X size={18} /></IconBtn>
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
+          <div>
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
+            <div className="flex flex-wrap gap-1.5">
+              {STATUSES.map((s) => (
+                <button key={s.key} onClick={() => changeStatus(s.key)}
+                  className={"rounded-full border px-3 py-1.5 text-xs font-semibold transition " + (client.status === s.key ? "border-transparent text-white" : "border-slate-200 text-slate-600 hover:border-slate-300")}
+                  style={client.status === s.key ? { background: s.color } : undefined}>{s.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <ContactRow icon={I.Phone} value={client.telefone || "—"} />
+            <ContactRow icon={I.Mail} value={client.email || "—"} />
+          </div>
+          <div className="flex gap-2.5">
+            <a href={waLink} target="_blank" rel="noreferrer"
+              className={"flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 " + (onlyDigits(client.telefone) ? "" : "pointer-events-none opacity-40")}
+              style={{ background: "#25D366" }}><I.Chat size={18} /> WhatsApp</a>
+            <a href={mailLink}
+              className={"flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 " + (client.email ? "" : "pointer-events-none opacity-40")}
+              style={{ background: mod.accent }}><I.Mail size={18} /> E-mail</a>
+          </div>
+
+          {client.obs && <div className="rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">{client.obs}</div>}
+
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">{mod.itemLabelPlural}</h3>
+              <div className="text-right text-xs text-slate-500">
+                {hasStatus && <div>Interesse: <span className="font-semibold text-slate-700">{BRL(totalInteresse)}</span></div>}
+                <div>{hasStatus ? "Contratado: " : "Total: "}<span className="font-semibold text-emerald-600">{BRL(hasStatus ? totalContratado : totalInteresse)}</span></div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {client.items.length === 0 && (
+                <p className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">Nenhum item registrado ainda.</p>
+              )}
+              {client.items.map((it) => (
+                <ItemCard key={it.id} mod={mod} item={it} onToggleStatus={() => toggleItemStatus(it.id)} onRemove={() => removeItem(it.id)} />
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3">
+              {mod.fields.map((f) => (
+                <div key={f.id} className={(f.type === "text" || f.fromOptions) ? "col-span-2" : "col-span-1"}>
+                  <FieldInput mod={mod} field={f} value={draft[f.id]} onChange={(v) => setDraftField(f.id, v)} small />
+                </div>
+              ))}
+              <button onClick={addItem} className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-white py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-50">
+                <I.Plus size={15} /> Adicionar {mod.itemLabel.toLowerCase()}
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h3 className="mb-3 text-sm font-bold text-slate-900">Tarefas e follow-ups</h3>
+            <div className="space-y-2">
+              {(!client.tasks || client.tasks.length === 0) && (
+                <p className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">Nenhum lembrete agendado.</p>
+              )}
+              {(client.tasks || []).map((t) => (
+                <div key={t.id} className="flex items-center gap-3 rounded-xl border border-slate-200 px-3.5 py-2.5">
+                  <button onClick={() => toggleTask(t.id)} className="shrink-0">
+                    {t.feito ? <span className="text-emerald-500"><I.Check size={20} /></span> : <span className="block h-5 w-5 rounded-full border-2 border-slate-300" />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className={"truncate text-sm " + (t.feito ? "text-slate-400 line-through" : "font-medium text-slate-800")}>{t.titulo}</div>
+                    {t.data && <div className={"text-xs " + (isOverdue(t.data) && !t.feito ? "font-semibold text-red-500" : "text-slate-500")}>{fmtDate(t.data)} {isOverdue(t.data) && !t.feito ? "· atrasado" : ""}</div>}
+                  </div>
+                  <button onClick={() => removeTask(t.id)} className="text-slate-300 transition hover:text-red-500"><I.X size={16} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-col gap-2 rounded-xl bg-slate-50 p-3 sm:flex-row">
+              <input placeholder="Ex.: Ligar para confirmar proposta" value={taskDraft.titulo}
+                onChange={(e) => setTaskDraft((d) => ({ ...d, titulo: e.target.value }))}
+                onKeyDown={(e) => e.key === "Enter" && addTask()} className={inputCls + " flex-1 text-xs"} />
+              <input type="date" value={taskDraft.data} onChange={(e) => setTaskDraft((d) => ({ ...d, data: e.target.value }))} className={inputCls + " text-xs sm:w-40"} />
+              <button onClick={addTask} className="inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110" style={{ background: mod.accent }}>
+                <I.Plus size={15} /> Adicionar
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ItemCard({ mod, item, onToggleStatus, onRemove }) {
+  const hasStatus = mod.fields.some((f) => f.type === "status");
+  const detailFields = mod.fields.filter((f) => f.type !== "status" && !f.fromOptions && f.type !== "currency");
+  const currencyField = mod.fields.find((f) => f.type === "currency");
+  return (
+    <div className="rounded-xl border border-slate-200 px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-slate-800">{itemTitle(mod, item)}</div>
+          {hasStatus && (
+            <button onClick={onToggleStatus}
+              className={"mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition " + (item.status === "contratado" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+              {item.status === "contratado" ? "Contratado" : "De interesse"} · trocar
+            </button>
+          )}
+        </div>
+        {currencyField && <div className="text-sm font-semibold tabular-nums text-slate-700">{BRL(item[currencyField.id])}</div>}
+        <button onClick={onRemove} className="text-slate-300 transition hover:text-red-500"><I.X size={16} /></button>
+      </div>
+      {detailFields.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+          {detailFields.map((f) => {
+            const v = item[f.id];
+            if (v === "" || v === undefined || v === null || (f.type === "number" && !v)) return null;
+            return <span key={f.id}><span className="text-slate-400">{f.label}:</span> <span className="font-medium text-slate-600">{v}</span></span>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldInput({ mod, field, value, onChange, small }) {
+  const cls = inputCls + (small ? " text-xs" : "");
+  if (field.fromOptions && mod.options && mod.options.length) {
+    return (
+      <label className="block">
+        {!small && <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}</span>}
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+          {mod.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === "status") {
+    return (
+      <label className="block">
+        {!small && <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}</span>}
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+          {ITEM_STATUS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === "number" || field.type === "currency") {
+    return (
+      <label className="block">
+        {!small && <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}</span>}
+        <input type="number" min="0" step={field.type === "currency" ? "0.01" : "any"} placeholder={small ? field.label : ""}
+          value={value} onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))} className={cls} />
+      </label>
+    );
+  }
+  return (
+    <label className="block">
+      {!small && <span className="mb-1.5 block text-sm font-medium text-slate-700">{field.label}</span>}
+      <input type="text" placeholder={small ? field.label : ""} value={value} onChange={(e) => onChange(e.target.value)} className={cls} />
+    </label>
+  );
+}
+
+function ContactRow({ icon: IconC, value }) {
+  return (
+    <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-700">
+      <span className="shrink-0 text-slate-400"><IconC size={16} /></span><span className="truncate">{value}</span>
+    </div>
+  );
+}
+function IconBtn({ children, onClick, title, danger }) {
+  return (
+    <button title={title} onClick={onClick}
+      className={"flex h-9 w-9 items-center justify-center rounded-lg transition " + (danger ? "text-slate-400 hover:bg-red-50 hover:text-red-600" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700")}>
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------- Client form ------------------------------ */
+function ClientForm({ mod, initial, onClose, onSave }) {
+  const [form, setForm] = useState(initial || { nome: "", telefone: "", email: "", empresa: "", status: "lead", obs: "" });
+  const [err, setErr] = useState("");
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const submit = () => {
+    if (!form.nome.trim()) { setErr("Informe ao menos o nome do cliente."); return; }
+    onSave({ ...form, nome: form.nome.trim() });
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-900">{initial ? "Editar cliente" : "Novo cliente"} <span className="text-sm font-normal text-slate-400">· {mod.nome}</span></h2>
+          <IconBtn title="Fechar" onClick={onClose}><I.X size={18} /></IconBtn>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2"><Field label="Nome *"><input className={inputCls} value={form.nome} onChange={set("nome")} placeholder="Nome do contato" /></Field></div>
+          <Field label="Telefone"><input className={inputCls} value={form.telefone} onChange={set("telefone")} placeholder="(11) 99999-9999" /></Field>
+          <Field label="E-mail"><input className={inputCls} value={form.email} onChange={set("email")} placeholder="nome@empresa.com" /></Field>
+          <Field label="Empresa"><input className={inputCls} value={form.empresa} onChange={set("empresa")} placeholder="Nome da empresa" /></Field>
+          <Field label="Status">
+            <select className={inputCls} value={form.status} onChange={set("status")}>
+              {STATUSES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
+          </Field>
+          <div className="sm:col-span-2"><Field label="Observações"><textarea className={inputCls + " min-h-[88px] resize-y"} value={form.obs} onChange={set("obs")} placeholder="Contexto, histórico, próximos passos…" /></Field></div>
+        </div>
+        {err && <p className="mt-3 text-sm text-red-500">{err}</p>}
+        <p className="mt-3 text-xs text-slate-400">Os {mod.itemLabelPlural.toLowerCase()} são adicionados ao abrir o card do cliente.</p>
+        <div className="mt-5 flex justify-end gap-2.5">
+          <button onClick={onClose} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Cancelar</button>
+          <button onClick={submit} className="rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110" style={{ background: mod.accent }}>
+            {initial ? "Salvar alterações" : "Cadastrar cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------- Module Manager ------------------------------- */
+const MODULE_COLORS = ["#2563EB", "#7C3AED", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444", "#EC4899", "#14B8A6"];
+
+function ModuleManager({ modules, onClose, onAdd, onDelete, onReset }) {
+  const [creating, setCreating] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900"><I.Cog size={20} /> Gerenciar módulos</h2>
+          <IconBtn title="Fechar" onClick={onClose}><I.X size={18} /></IconBtn>
+        </div>
+
+        {!creating ? (
+          <>
+            <div className="space-y-2">
+              {modules.map((m) => {
+                const MIcon = I[m.icon] || I.Grid;
+                return (
+                  <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg text-white" style={{ background: m.accent }}><MIcon size={17} /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900">{m.nome}</div>
+                      <div className="text-xs text-slate-500">{m.clients.length} cliente(s) · {m.fields.length} campo(s) por {m.itemLabel.toLowerCase()}</div>
+                    </div>
+                    {modules.length > 1 && (
+                      <button onClick={() => { if (confirm("Excluir o módulo \"" + m.nome + "\" e todos os seus clientes?")) onDelete(m.id); }}
+                        className="text-slate-300 transition hover:text-red-500" title="Excluir módulo"><I.Trash size={18} /></button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={() => setCreating(true)}
+              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50/50 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-50">
+              <I.Plus size={18} /> Criar novo módulo de produto
+            </button>
+            <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-4">
+              <p className="text-xs text-slate-400">Os dados são salvos automaticamente neste navegador.</p>
+              <button onClick={onReset} className="text-xs font-semibold text-slate-500 transition hover:text-red-500">Restaurar dados de exemplo</button>
+            </div>
+          </>
+        ) : (
+          <ModuleBuilder onCancel={() => setCreating(false)} onCreate={onAdd} existingIds={modules.map((m) => m.id)} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ModuleBuilder({ onCancel, onCreate, existingIds }) {
+  const [nome, setNome] = useState("");
+  const [itemLabel, setItemLabel] = useState("Item");
+  const [accent, setAccent] = useState(MODULE_COLORS[2]);
+  const [options, setOptions] = useState("");
+  const [fields, setFields] = useState([
+    { id: "tipo", label: "Tipo", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "valor", label: "Valor", type: "currency" },
+  ]);
+  const [err, setErr] = useState("");
+
+  const addField = () => setFields((fs) => [...fs, { id: "campo" + (fs.length + 1), label: "", type: "text" }]);
+  const updateField = (i, patch) => setFields((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
+  const removeField = (i) => setFields((fs) => fs.filter((_, idx) => idx !== i));
+
+  const create = () => {
+    if (!nome.trim()) { setErr("Dê um nome ao módulo."); return; }
+    const validFields = fields.filter((f) => f.label.trim());
+    if (validFields.length === 0) { setErr("Adicione ao menos um campo."); return; }
+    let base = nome.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    let id = base || "modulo"; let n = 1;
+    while (existingIds.includes(id)) { id = base + "_" + (++n); }
+    const finalFields = validFields.map((f, i) => ({
+      id: (f.id && f.id !== "" ? f.id : "campo_" + i).toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+      label: f.label.trim(),
+      type: f.type,
+      fromOptions: !!f.fromOptions && f.type === "text",
+    }));
+    const opts = options.split("\n").map((o) => o.trim()).filter(Boolean);
+    onCreate({
+      id, nome: nome.trim(), icon: "Grid", accent,
+      itemLabel: itemLabel.trim() || "Item",
+      itemLabelPlural: (itemLabel.trim() || "Item") + "s",
+      options: opts, fields: finalFields,
+    });
+  };
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Nome do módulo *"><input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Crédito, Seguros, Energia" /></Field>
+        <Field label="Rótulo do item"><input className={inputCls} value={itemLabel} onChange={(e) => setItemLabel(e.target.value)} placeholder="Ex.: Produto, Plano, Contrato" /></Field>
+      </div>
+
+      <div className="mt-4">
+        <span className="mb-1.5 block text-sm font-medium text-slate-700">Cor</span>
+        <div className="flex flex-wrap gap-2">
+          {MODULE_COLORS.map((c) => (
+            <button key={c} onClick={() => setAccent(c)}
+              className={"h-8 w-8 rounded-lg transition " + (accent === c ? "ring-2 ring-offset-2 ring-slate-400" : "")} style={{ background: c }} />
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <Field label="Opções pré-definidas (uma por linha, opcional)">
+          <textarea className={inputCls + " min-h-[70px] resize-y"} value={options} onChange={(e) => setOptions(e.target.value)}
+            placeholder={"Empréstimo pessoal\nCapital de giro\nFinanciamento"} />
+        </Field>
+        <p className="mt-1 text-xs text-slate-400">Usadas no campo marcado como "lista".</p>
+      </div>
+
+      <div className="mt-5">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-semibold text-slate-700">Campos por {(itemLabel || "item").toLowerCase()}</span>
+          <button onClick={addField} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline"><I.Plus size={14} /> Campo</button>
+        </div>
+        <div className="space-y-2">
+          {fields.map((f, i) => (
+            <div key={i} className="grid grid-cols-12 items-center gap-2 rounded-xl bg-slate-50 p-2">
+              <input className={inputCls + " col-span-5 text-xs"} value={f.label} onChange={(e) => updateField(i, { label: e.target.value })} placeholder="Nome do campo" />
+              <select className={inputCls + " col-span-4 text-xs"} value={f.type} onChange={(e) => updateField(i, { type: e.target.value })}>
+                {FIELD_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+              <label className="col-span-2 flex items-center gap-1 text-[11px] text-slate-600" title="Preencher a partir da lista de opções">
+                <input type="checkbox" checked={!!f.fromOptions} disabled={f.type !== "text"} onChange={(e) => updateField(i, { fromOptions: e.target.checked })} /> lista
+              </label>
+              <button onClick={() => removeField(i)} className="col-span-1 flex justify-center text-slate-300 hover:text-red-500"><I.X size={15} /></button>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1.5 text-xs text-slate-400">Tipos: texto, número, valor (R$, soma no funil/painel) e status (interesse/contratado). Marque "lista" para um campo de texto puxar das opções acima.</p>
+      </div>
+
+      {err && <p className="mt-3 text-sm text-red-500">{err}</p>}
+      <div className="mt-5 flex justify-end gap-2.5">
+        <button onClick={onCancel} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Voltar</button>
+        <button onClick={create} className="rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-110" style={{ background: PRIMARY }}>Criar módulo</button>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------- helpers --------------------------------- */
+function initials(name) {
+  return (name || "?").split(" ").filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join("");
+}
+function fmtDate(d) { if (!d) return "sem data"; const [y, m, day] = d.split("-"); return day + "/" + m + "/" + y; }
+function isOverdue(d) { if (!d) return false; return d < new Date().toISOString().slice(0, 10); }
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ProsperaCRM />);
+</script>
+</body>
+</html>
