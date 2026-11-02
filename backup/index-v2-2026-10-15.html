@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Próspera CRM</title>
+<meta name="description" content="CRM multi-produto da Próspera Benefícios" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%233152E4'/%3E%3Cpath d='M15 17c-5 0-8 3-8 7s3 7 8 7c4 0 6-3 9-7 3-4 5-7 9-7 5 0 8 3 8 7s-3 7-8 7c-4 0-6-3-9-7' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://unpkg.com" crossorigin />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  /* Identidade visual da Próspera (mesma do site prosperabeneficios.com): azul #3152E4, tinta #1A1A2E, fundo #F7F9FA, fonte Inter. */
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: { DEFAULT: "#3152E4", dark: "#2541B8", 50: "#EFF4FF", 100: "#DBEAFE", 200: "#BFDBFE" },
+          ink: "#1A1A2E",
+          canvas: "#F7F9FA",
+        },
+        fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"] },
+        boxShadow: {
+          card: "0 1px 2px rgba(26,26,46,.04), 0 1px 3px rgba(26,26,46,.06)",
+          pop: "0 18px 40px -18px rgba(26,26,46,.28), 0 2px 6px rgba(26,26,46,.06)",
+        },
+      },
+    },
+  };
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root { --blue: #3152E4; --ink: #1A1A2E; --canvas: #F7F9FA; color-scheme: light; }
+  html, body, #root { height: 100%; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; margin: 0; background: var(--canvas); color: var(--ink); -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: padding-box; border: 2px solid transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  :where(button, a, [tabindex]):focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slideRight { from { transform: translateX(28px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes slideLeft { from { transform: translateX(-28px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes popIn { from { transform: translateY(10px) scale(.985); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes toastIn { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+  .anim-fade { animation: fadeIn .18s ease-out both; }
+  .anim-slide-right { animation: slideRight .24s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-slide-left { animation: slideLeft .24s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-pop { animation: popIn .2s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-toast { animation: toastIn .22s cubic-bezier(.2,.8,.2,1) both; }
+  @media (prefers-reduced-motion: reduce) { .anim-fade, .anim-slide-right, .anim-slide-left, .anim-pop, .anim-toast { animation: none; } * { transition: none !important; } }
+
+  #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #475569; background: var(--canvas); font-family: 'Inter', system-ui, sans-serif; z-index: 100; }
+  #boot .ring { width: 38px; height: 38px; border: 4px solid #e2e8f0; border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #boot.err { color: #b91c1c; padding: 24px; text-align: center; }
+  #boot.err .ring { display: none; }
+  #boot code { display: block; margin-top: 8px; max-width: 90vw; overflow: auto; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #7f1d1d; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot"><div class="ring"></div><div>Carregando o CRM…</div></div>
+
+<script>
+/* Tela de carregamento + captura de erros: garante que nunca fique "branco mudo". */
+(function () {
+  function showError(msg) {
+    var b = document.getElementById("boot");
+    if (!b) return;
+    b.className = "err";
+    b.innerHTML = '<div style="font-weight:700;font-size:16px">Não foi possível carregar o CRM</div>' +
+      '<div style="font-size:13px;max-width:520px">Isso costuma ser uma biblioteca externa bloqueada (rede, extensão ou firewall). Tente outro navegador ou uma aba anônima sem extensões.</div>' +
+      '<code>' + String(msg).replace(/[<>&]/g, function (c) { return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]); }) + '</code>';
+  }
+  window.__crmError = showError;
+  window.addEventListener("error", function (e) {
+    if (e && e.message) showError(e.message + (e.filename ? "  ("+e.filename+")" : ""));
+  });
+  setTimeout(function () {
+    var root = document.getElementById("root");
+    if (root && root.childElementCount === 0) {
+      if (!window.React) return showError("React não carregou (CDN unpkg.com bloqueado?).");
+      if (!window.Babel) return showError("Babel não carregou (CDN unpkg.com bloqueado?).");
+      showError("O aplicativo não renderizou. Abra o Console (F12) para ver o detalhe.");
+    }
+  }, 12000);
+})();
+</script>
+
+<script type="text/babel" data-presets="react" data-type="module">
+const { useState, useMemo, useRef, useEffect, useCallback } = React;
+
+/* ============================================================================
+   Próspera CRM — arquivo HTML único, dados salvos no navegador (localStorage).
+   Módulos independentes (Benefícios, Adquirência + criados pelo usuário), cada
+   um com sua lista de clientes e seu esquema de campos.
+============================================================================ */
+const BRAND = "#3152E4";
+
+/* Cores das etapas: usadas em pontos, barras e bordas; o texto nunca fica
+   branco sobre elas (badges usam fundo suave + texto escuro). */
+const STATUSES = [
+  { key: "lead",       label: "Lead",          color: "#3152E4", soft: "#EFF4FF", text: "#2541B8", hint: "Primeiro contato" },
+  { key: "negociacao", label: "Em negociação", color: "#D97706", soft: "#FEF3C7", text: "#92400E", hint: "Proposta em andamento" },
+  { key: "fechado",    label: "Fechado",       color: "#047857", soft: "#E6F6EE", text: "#065F46", hint: "Contrato assinado" },
+  { key: "perdido",    label: "Perdido",       color: "#DC2626", soft: "#FEE2E2", text: "#991B1B", hint: "Não avançou" },
+];
+const statusMeta = (k) => STATUSES.find((s) => s.key === k) || STATUSES[0];
+
+const ITEM_STATUS = [
+  { key: "interesse", label: "De interesse" },
+  { key: "contratado", label: "Contratado" },
+];
+
+const FIELD_TYPES = [
+  { key: "text", label: "Texto" },
+  { key: "number", label: "Número" },
+  { key: "currency", label: "Valor (R$)" },
+  { key: "status", label: "Status (interesse/contratado)" },
+];
+
+/* -------------------------------- helpers --------------------------------- */
+const BRL = (v) => (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const onlyDigits = (s) => (s || "").replace(/\D/g, "");
+const uid = () => Math.random().toString(36).slice(2, 10);
+const pad2 = (n) => String(n).padStart(2, "0");
+const toISODate = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+const todayISO = () => toISODate(new Date());
+const daysFromNow = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return toISODate(d); };
+const nowISO = () => new Date().toISOString();
+const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+
+function fmtDate(d) { if (!d) return "sem data"; const [y, m, day] = d.split("-"); return day + "/" + m + "/" + y; }
+function isOverdue(d) { return !!d && d < todayISO(); }
+function daysUntil(d) {
+  if (!d) return null;
+  const a = new Date(d + "T00:00:00"), b = new Date(todayISO() + "T00:00:00");
+  return Math.round((a - b) / 864e5);
+}
+function relTime(iso) {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "agora";
+  if (m < 60) return "há " + m + " min";
+  const h = Math.floor(m / 60);
+  if (h < 24) return "há " + h + " h";
+  const d = Math.floor(h / 24);
+  if (d === 1) return "ontem";
+  if (d < 30) return "há " + d + " dias";
+  return new Date(iso).toLocaleDateString("pt-BR");
+}
+function fmtDateTime(iso) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function greeting() { const h = new Date().getHours(); return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; }
+function longToday() {
+  const s = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function initials(name) { return (name || "?").split(" ").filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join(""); }
+const AVATAR_COLORS = ["#3152E4", "#7C3AED", "#047857", "#B45309", "#BE185D", "#0E7490", "#4338CA", "#9F1239"];
+function avatarColor(name) {
+  let h = 0;
+  for (const ch of (name || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function maskPhone(v) {
+  const d = onlyDigits(v).slice(0, 11);
+  if (!d) return "";
+  if (d.length <= 2) return "(" + d;
+  if (d.length <= 6) return "(" + d.slice(0, 2) + ") " + d.slice(2);
+  if (d.length <= 10) return "(" + d.slice(0, 2) + ") " + d.slice(2, 6) + "-" + d.slice(6);
+  return "(" + d.slice(0, 2) + ") " + d.slice(2, 7) + "-" + d.slice(7);
+}
+const isEmail = (s) => !s || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+function downloadFile(name, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+const csvCell = (v) => { const s = String(v ?? ""); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+const isTyping = (el) => !!el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
+const VIEW_HASH = { painel: "dashboard", dashboard: "dashboard", clientes: "clientes", funil: "funil" };
+
+/* --------------------------- Ícones (SVG inline) -------------------------- */
+function Icon({ size = 20, stroke = "currentColor", fill = "none", children, className = "", paths, d }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={stroke}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      {paths ? paths.map((p, i) => <path key={i} d={p} />) : null}
+      {d ? <path d={d} /> : null}
+      {children}
+    </svg>
+  );
+}
+const I = {
+  Users: (p) => <Icon {...p} paths={["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2","M22 21v-2a4 4 0 0 0-3-3.87"]}><circle cx="9" cy="7" r="4"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Icon>,
+  Trend: (p) => <Icon {...p}><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></Icon>,
+  Check: (p) => <Icon {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Icon>,
+  CheckSimple: (p) => <Icon {...p}><polyline points="20 6 9 17 4 12"/></Icon>,
+  Handshake: (p) => <Icon {...p} paths={["m11 17 2 2a1 1 0 1 0 3-3","m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4","M21 3v9","M3 4h8","M3 9h7"]} />,
+  Search: (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></Icon>,
+  Plus: (p) => <Icon {...p}><path d="M5 12h14"/><path d="M12 5v14"/></Icon>,
+  Phone: (p) => <Icon {...p} d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z" />,
+  Mail: (p) => <Icon {...p}><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></Icon>,
+  Chat: (p) => <Icon {...p} d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z" />,
+  Building: (p) => <Icon {...p}><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></Icon>,
+  X: (p) => <Icon {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></Icon>,
+  Clock: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Icon>,
+  Calendar: (p) => <Icon {...p}><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></Icon>,
+  Trash: (p) => <Icon {...p}><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>,
+  Dash: (p) => <Icon {...p}><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></Icon>,
+  Kanban: (p) => <Icon {...p}><path d="M6 5v11M12 5v6M18 5v14"/></Icon>,
+  List: (p) => <Icon {...p}><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></Icon>,
+  Pencil: (p) => <Icon {...p} d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />,
+  Bell: (p) => <Icon {...p}><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></Icon>,
+  ChevR: (p) => <Icon {...p}><path d="m9 18 6-6-6-6"/></Icon>,
+  ChevL: (p) => <Icon {...p}><path d="m15 18-6-6 6-6"/></Icon>,
+  ChevD: (p) => <Icon {...p}><path d="m6 9 6 6 6-6"/></Icon>,
+  ChevU: (p) => <Icon {...p}><path d="m18 15-6-6-6 6"/></Icon>,
+  Grid: (p) => <Icon {...p}><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></Icon>,
+  Card: (p) => <Icon {...p}><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></Icon>,
+  Gift: (p) => <Icon {...p}><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8M16.5 8a2.5 2.5 0 0 0 0-5C9 3 12 8 12 8"/></Icon>,
+  Wallet: (p) => <Icon {...p}><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></Icon>,
+  Briefcase: (p) => <Icon {...p}><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></Icon>,
+  Target: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></Icon>,
+  Percent: (p) => <Icon {...p}><line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></Icon>,
+  Cog: (p) => <Icon {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Icon>,
+  Menu: (p) => <Icon {...p}><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></Icon>,
+  Download: (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></Icon>,
+  Upload: (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></Icon>,
+  Alert: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></Icon>,
+  Info: (p) => <Icon {...p}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></Icon>,
+  Sort: (p) => <Icon {...p}><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></Icon>,
+  Activity: (p) => <Icon {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></Icon>,
+  Reset: (p) => <Icon {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></Icon>,
+  Save: (p) => <Icon {...p}><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></Icon>,
+  Filter: (p) => <Icon {...p}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></Icon>,
+  Table: (p) => <Icon {...p}><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></Icon>,
+  Inbox: (p) => <Icon {...p}><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></Icon>,
+  Keyboard: (p) => <Icon {...p}><rect width="20" height="16" x="2" y="4" rx="2" ry="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></Icon>,
+};
+const ICON_CHOICES = ["Grid", "Gift", "Card", "Wallet", "Briefcase", "Target", "Building", "Percent"];
+
+/* ----------------------------- MÓDULOS NATIVOS ---------------------------- */
+const benefitsModule = {
+  id: "beneficios", nome: "Benefícios", icon: "Gift", accent: "#3152E4",
+  itemLabel: "Benefício", itemLabelPlural: "Benefícios corporativos",
+  options: ["Plano de saúde", "Odontológico", "Vale-refeição/alimentação", "Seguro de vida", "Previdência", "Vale-transporte"],
+  fields: [
+    { id: "tipo", label: "Tipo", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "valor", label: "Valor anual", type: "currency" },
+  ],
+};
+
+const acquiringModule = {
+  id: "adquirencia", nome: "Adquirência", icon: "Card", accent: "#7C3AED",
+  itemLabel: "Produto", itemLabelPlural: "Produtos de adquirência",
+  options: ["Maquininha POS", "Pinpad / TEF", "Tap to Pay (celular)", "Gateway online", "Link de pagamento", "Antecipação de recebíveis"],
+  fields: [
+    { id: "tipo", label: "Produto", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "qtd", label: "Qtd. equipamentos", type: "number" },
+    { id: "modelo", label: "Modelo", type: "text" },
+    { id: "bandeiras", label: "Bandeiras", type: "text" },
+    { id: "tpv", label: "TPV mensal estimado", type: "currency" },
+    { id: "mdr_debito", label: "Taxa débito (%)", type: "number" },
+    { id: "mdr_credito", label: "Taxa crédito (%)", type: "number" },
+    { id: "taxa_pix", label: "Taxa Pix (%)", type: "number" },
+    { id: "antecipacao", label: "Antecipação (% a.m.)", type: "number" },
+  ],
+};
+
+/* -------------------------- DADOS-SEMENTE POR MÓDULO ---------------------- */
+const hist = (h, text) => ({ id: uid(), at: hoursAgo(h), text });
+const seedBeneficios = [
+  { id: uid(), nome: "Mariana Costa", telefone: "(11) 98888-1234", email: "mariana@techlog.com.br", empresa: "TechLog Soluções", status: "negociacao",
+    obs: "Empresa com 80 funcionários, busca pacote completo até o fim do trimestre.",
+    items: [
+      { id: uid(), tipo: "Plano de saúde", status: "interesse", valor: 18500 },
+      { id: uid(), tipo: "Odontológico", status: "interesse", valor: 2400 },
+    ],
+    tasks: [{ id: uid(), titulo: "Enviar proposta revisada", data: daysFromNow(1), feito: false }],
+    createdAt: hoursAgo(80), updatedAt: hoursAgo(3),
+    history: [hist(3, "Status alterado para Em negociação"), hist(30, "Benefício adicionado: Odontológico"), hist(80, "Cliente cadastrado")] },
+  { id: uid(), nome: "Ricardo Alves", telefone: "(21) 97777-5678", email: "ricardo@nortemed.com", empresa: "NorteMed", status: "fechado",
+    obs: "Contrato assinado. Renovação anual em janeiro.",
+    items: [
+      { id: uid(), tipo: "Plano de saúde", status: "contratado", valor: 32000 },
+      { id: uid(), tipo: "Seguro de vida", status: "contratado", valor: 4800 },
+      { id: uid(), tipo: "Vale-refeição/alimentação", status: "contratado", valor: 9600 },
+    ],
+    tasks: [{ id: uid(), titulo: "Agendar reunião de pós-venda", data: daysFromNow(6), feito: false }],
+    createdAt: hoursAgo(300), updatedAt: hoursAgo(26),
+    history: [hist(26, "Status alterado para Fechado"), hist(60, "Tarefa criada: Agendar reunião de pós-venda"), hist(300, "Cliente cadastrado")] },
+  { id: uid(), nome: "Juliana Prado", telefone: "(31) 96666-4321", email: "ju.prado@grupobravo.com.br", empresa: "Grupo Bravo", status: "lead",
+    obs: "Indicação de cliente. Primeiro contato pendente.",
+    items: [{ id: uid(), tipo: "Previdência", status: "interesse", valor: 0 }],
+    tasks: [{ id: uid(), titulo: "Fazer primeiro contato por telefone", data: daysFromNow(-2), feito: false }],
+    createdAt: hoursAgo(50), updatedAt: hoursAgo(50),
+    history: [hist(50, "Cliente cadastrado")] },
+  { id: uid(), nome: "Fernando Lima", telefone: "(41) 95555-8765", email: "fernando@delta.ind.br", empresa: "Delta Indústria", status: "perdido",
+    obs: "Optou por concorrente por questão de preço.", items: [], tasks: [],
+    createdAt: hoursAgo(400), updatedAt: hoursAgo(120),
+    history: [hist(120, "Status alterado para Perdido"), hist(400, "Cliente cadastrado")] },
+];
+
+const seedAdquirencia = [
+  { id: uid(), nome: "Patrícia Gomes", telefone: "(11) 91234-0001", email: "patricia@redeveloz.com.br", empresa: "Rede Veloz Varejo", status: "negociacao",
+    obs: "Rede com 12 lojas. Quer reduzir MDR e ter antecipação automática.",
+    items: [
+      { id: uid(), tipo: "Maquininha POS", status: "interesse", qtd: 24, modelo: "Smart POS A920", bandeiras: "Visa, Master, Elo", tpv: 480000, mdr_debito: 0.99, mdr_credito: 2.49, taxa_pix: 0.49, antecipacao: 1.8 },
+    ],
+    tasks: [{ id: uid(), titulo: "Simular taxas por loja", data: daysFromNow(0), feito: false }],
+    createdAt: hoursAgo(90), updatedAt: hoursAgo(8),
+    history: [hist(8, "Status alterado para Em negociação"), hist(90, "Cliente cadastrado")] },
+  { id: uid(), nome: "André Souza", telefone: "(48) 99876-0002", email: "andre@cafedaesquina.com", empresa: "Café da Esquina", status: "fechado",
+    obs: "Microempreendedor, fechou com Tap to Pay no celular.",
+    items: [
+      { id: uid(), tipo: "Tap to Pay (celular)", status: "contratado", qtd: 2, modelo: "App Próspera Pay", bandeiras: "Visa, Master", tpv: 35000, mdr_debito: 1.29, mdr_credito: 3.19, taxa_pix: 0.99, antecipacao: 2.2 },
+    ],
+    tasks: [], createdAt: hoursAgo(200), updatedAt: hoursAgo(40),
+    history: [hist(40, "Status alterado para Fechado"), hist(200, "Cliente cadastrado")] },
+  { id: uid(), nome: "Loja Bella Moda", telefone: "(85) 98765-0003", email: "contato@bellamoda.com.br", empresa: "Bella Moda", status: "lead",
+    obs: "Indicação. Avaliando trocar de adquirente atual.",
+    items: [{ id: uid(), tipo: "Link de pagamento", status: "interesse", qtd: 0, modelo: "", bandeiras: "", tpv: 60000, mdr_debito: 0, mdr_credito: 0, taxa_pix: 0, antecipacao: 0 }],
+    tasks: [], createdAt: hoursAgo(20), updatedAt: hoursAgo(20),
+    history: [hist(20, "Cliente cadastrado")] },
+];
+
+const initialModules = [
+  { ...benefitsModule, clients: seedBeneficios },
+  { ...acquiringModule, clients: seedAdquirencia },
+];
+
+/* ----------------------- PERSISTÊNCIA (localStorage) ----------------------
+   Mesma chave da versão anterior, para não perder o que já estava salvo.
+   Dados antigos ganham campos novos (createdAt, updatedAt, history) na carga.
+--------------------------------------------------------------------------- */
+const STORAGE_KEY = "prospera_crm_v2";
+const LEGACY_ACCENT = { "#2563EB": "#3152E4" };
+
+function hydrateClient(c) {
+  const now = nowISO();
+  const base = { items: [], tasks: [], history: [], obs: "", empresa: "", telefone: "", email: "", status: "lead", ...c };
+  base.items = Array.isArray(base.items) ? base.items : [];
+  base.tasks = Array.isArray(base.tasks) ? base.tasks : [];
+  base.history = Array.isArray(base.history) ? base.history : [];
+  base.createdAt = base.createdAt || now;
+  base.updatedAt = base.updatedAt || base.createdAt;
+  return base;
+}
+function hydrateModule(m) {
+  const accent = LEGACY_ACCENT[String(m.accent || "").toUpperCase()] || m.accent || BRAND;
+  return {
+    icon: "Grid", options: [], fields: [], itemLabel: "Item", itemLabelPlural: "Itens", ...m, accent,
+    clients: Array.isArray(m.clients) ? m.clients.map(hydrateClient) : [],
+  };
+}
+function loadModules() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return initialModules;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return initialModules;
+    return parsed.map(hydrateModule);
+  } catch (e) {
+    console.warn("Falha ao carregar dados salvos; usando dados iniciais.", e);
+    return initialModules;
+  }
+}
+function saveModules(modules) {
+  try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(modules)); return true; }
+  catch (e) { console.warn("Não foi possível salvar localmente.", e); return false; }
+}
+function clearSavedModules() { try { window.localStorage.removeItem(STORAGE_KEY); } catch (e) {} }
+
+/* --------------------------- cálculos de domínio --------------------------- */
+function fieldDefault(f) { return f.type === "status" ? "interesse" : (f.type === "number" || f.type === "currency") ? 0 : ""; }
+function newItem(mod) {
+  const it = { id: uid() };
+  mod.fields.forEach((f) => { it[f.id] = fieldDefault(f); });
+  const tf = mod.fields.find((f) => f.fromOptions);
+  if (tf && mod.options && mod.options.length) it[tf.id] = mod.options[0];
+  return it;
+}
+function itemTitle(mod, item) {
+  const tf = mod.fields.find((f) => f.fromOptions) || mod.fields.find((f) => f.type === "text");
+  return tf ? (item[tf.id] || mod.itemLabel) : mod.itemLabel;
+}
+function itemValue(mod, item) {
+  const cf = mod.fields.find((f) => f.type === "currency");
+  return cf ? (Number(item[cf.id]) || 0) : 0;
+}
+function clientValue(mod, c) { return (c.items || []).reduce((s, it) => s + itemValue(mod, it), 0); }
+function pendingTasks(c) { return (c.tasks || []).filter((t) => !t.feito); }
+function overdueTasks(c) { return pendingTasks(c).filter((t) => isOverdue(t.data)); }
+
+/* ------------------------------ estilos base ------------------------------ */
+const inputCls = "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition placeholder:text-slate-400 focus:border-brand focus:ring-4 focus:ring-brand/10 disabled:bg-slate-50";
+const inputErrCls = " border-red-400 focus:border-red-500 focus:ring-red-100";
+const btn = {
+  primary: "inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-dark active:scale-[.98] disabled:opacity-50 disabled:pointer-events-none",
+  secondary: "inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 active:scale-[.98]",
+  ghost: "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100",
+  danger: "inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 active:scale-[.98]",
+  dangerSoft: "inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50",
+};
+
+/* ------------------------------- UI básicos ------------------------------- */
+function Logo({ height = 26 }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <div className="flex items-center gap-2.5 select-none">
+      {!broken
+        ? <img src="assets/logo.png" alt="Próspera" style={{ height }} className="w-auto" onError={() => setBroken(true)} />
+        : <span className="text-[22px] font-bold lowercase tracking-tight text-ink">próspera</span>}
+      <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand">CRM</span>
+    </div>
+  );
+}
+function Avatar({ name, size = 40, className = "" }) {
+  return (
+    <div className={"flex shrink-0 items-center justify-center rounded-full font-bold text-white " + className}
+      style={{ width: size, height: size, background: avatarColor(name), fontSize: Math.round(size * 0.36) }} aria-hidden="true">
+      {initials(name)}
+    </div>
+  );
+}
+function StatusBadge({ status, size = "sm" }) {
+  const m = statusMeta(status);
+  return (
+    <span className={"inline-flex items-center gap-1.5 rounded-full font-semibold " + (size === "xs" ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs")}
+      style={{ background: m.soft, color: m.text }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: m.color }} />{m.label}
+    </span>
+  );
+}
+function StatusMenu({ value, onChange, align = "right" }) {
+  const [open, setOpen] = useState(false);
+  const m = statusMeta(value);
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+        className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:brightness-[.97]"
+        style={{ background: m.soft, color: m.text, borderColor: m.color + "40" }}>
+        <span className="h-2 w-2 rounded-full" style={{ background: m.color }} />{m.label}<I.ChevD size={14} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className={"absolute z-20 mt-2 w-60 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-pop anim-pop " + (align === "right" ? "right-0" : "left-0")} role="listbox">
+            <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Mover para</div>
+            {STATUSES.map((s) => (
+              <button key={s.key} type="button" role="option" aria-selected={s.key === value}
+                onClick={() => { onChange(s.key); setOpen(false); }}
+                className={"flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition hover:bg-slate-50 " + (s.key === value ? "bg-slate-50" : "")}>
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                <span className="flex-1"><span className="block font-medium text-ink">{s.label}</span><span className="block text-xs text-slate-500">{s.hint}</span></span>
+                {s.key === value && <span className="text-brand"><I.CheckSimple size={16} /></span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+function Field({ label, hint, error, children, required }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 flex items-center gap-1 text-sm font-medium text-slate-700">{label}{required && <span className="text-red-500">*</span>}</span>
+      {children}
+      {error ? <span className="mt-1 block text-xs font-medium text-red-600">{error}</span> : hint ? <span className="mt-1 block text-xs text-slate-400">{hint}</span> : null}
+    </label>
+  );
+}
+function IconBtn({ children, onClick, title, danger, className = "" }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick}
+      className={"flex h-9 w-9 items-center justify-center rounded-lg transition " + (danger ? "text-slate-400 hover:bg-red-50 hover:text-red-600" : "text-slate-400 hover:bg-slate-100 hover:text-slate-700") + " " + className}>
+      {children}
+    </button>
+  );
+}
+function Card({ children, className = "" }) {
+  return <div className={"rounded-2xl border border-slate-200 bg-white shadow-card " + className}>{children}</div>;
+}
+function CardHeader({ title, subtitle, action, icon: IconC }) {
+  return (
+    <div className="flex items-start justify-between gap-3 px-5 pt-5">
+      <div className="min-w-0">
+        <h2 className="flex items-center gap-2 text-[15px] font-semibold text-ink">{IconC && <span className="text-slate-400"><IconC size={17} /></span>}{title}</h2>
+        {subtitle && <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+function SectionLabel({ children }) {
+  return <div className="px-3 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{children}</div>;
+}
+function EmptyState({ icon: IconC, title, text, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center px-6 py-14 text-center">
+      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><IconC size={22} /></div>
+      <div className="text-sm font-semibold text-ink">{title}</div>
+      {text && <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-500">{text}</p>}
+      {action && <div className="mt-4">{action}</div>}
+    </div>
+  );
+}
+function Kbd({ children }) {
+  return <kbd className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-sans text-[11px] font-semibold text-slate-500">{children}</kbd>;
+}
+
+/* --------------------------------- App ------------------------------------ */
+function ProsperaCRM() {
+  const [modules, setModules] = useState(loadModules);
+  const [activeModId, setActiveModId] = useState(() => (modules[0] || initialModules[0]).id);
+  const [savedAt, setSavedAt] = useState(null);
+
+  useEffect(() => { if (saveModules(modules)) setSavedAt(Date.now()); }, [modules]);
+
+  /* A tela atual vai na URL (#painel, #clientes, #funil) para poder favoritar ou compartilhar o link. */
+  const [view, setView] = useState(() => { const h = (window.location.hash || "").replace("#", ""); return VIEW_HASH[h] || "dashboard"; });
+  useEffect(() => { try { window.history.replaceState(null, "", "#" + (view === "dashboard" ? "painel" : view)); } catch (e) {} }, [view]);
+  const [query, setQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState("todos");
+  const [sort, setSort] = useState({ key: "updatedAt", dir: "desc" });
+  const [openId, setOpenId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [moduleManagerOpen, setModuleManagerOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [confirmState, setConfirmState] = useState(null);
+  const [toasts, setToasts] = useState([]);
+  const dragId = useRef(null);
+  const searchRef = useRef(null);
+
+  const mod = modules.find((m) => m.id === activeModId) || modules[0];
+  const clients = mod.clients;
+  const openClient = clients.find((c) => c.id === openId) || null;
+
+  /* ---- feedback ---- */
+  const notify = useCallback((t) => {
+    const id = uid();
+    setToasts((ts) => [...ts, { id, kind: "success", ...t }]);
+    setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), t.duration || 4500);
+  }, []);
+  const dismissToast = (id) => setToasts((ts) => ts.filter((x) => x.id !== id));
+  const askConfirm = (opts) => setConfirmState(opts);
+
+  /* ---- mutações ---- */
+  const setModuleClients = (updater, modId = mod.id) =>
+    setModules((ms) => ms.map((m) => (m.id === modId ? { ...m, clients: typeof updater === "function" ? updater(m.clients) : updater } : m)));
+
+  const touch = (c, text) => ({
+    ...c, updatedAt: nowISO(),
+    history: text ? [{ id: uid(), at: nowISO(), text }, ...(c.history || [])].slice(0, 80) : (c.history || []),
+  });
+  const updateClient = (id, fn, logText) =>
+    setModuleClients((cs) => cs.map((c) => {
+      if (c.id !== id) return c;
+      const next = fn(c);
+      return touch(next, typeof logText === "function" ? logText(c, next) : logText);
+    }));
+
+  const saveClient = (data) => {
+    if (data.id) {
+      updateClient(data.id, (c) => ({ ...c, ...data }), "Dados do cliente atualizados");
+      notify({ title: "Cliente atualizado", message: data.nome });
+    } else {
+      const c = hydrateClient({ ...data, id: uid(), history: [{ id: uid(), at: nowISO(), text: "Cliente cadastrado" }] });
+      setModuleClients((cs) => [c, ...cs]);
+      notify({ title: "Cliente cadastrado", message: "Agora adicione os " + mod.itemLabelPlural.toLowerCase() + " dele." });
+      setOpenId(c.id);
+    }
+    setFormOpen(false); setEditing(null);
+  };
+
+  const removeClient = (id) => {
+    const c = clients.find((x) => x.id === id);
+    if (!c) return;
+    const idx = clients.indexOf(c);
+    const modId = mod.id;
+    askConfirm({
+      title: "Excluir " + c.nome + "?",
+      message: "O cliente e todos os seus " + mod.itemLabelPlural.toLowerCase() + " e tarefas serão removidos. Você pode desfazer logo em seguida.",
+      confirmLabel: "Excluir cliente", danger: true,
+      onConfirm: () => {
+        setModuleClients((cs) => cs.filter((x) => x.id !== id), modId);
+        if (openId === id) setOpenId(null);
+        notify({ title: "Cliente excluído", message: c.nome, kind: "info", duration: 7000,
+          action: { label: "Desfazer", onClick: () => { setModuleClients((cs) => { const n = [...cs]; n.splice(Math.min(idx, n.length), 0, c); return n; }, modId); } } });
+      },
+    });
+  };
+
+  const moveClient = (id, status, { silent } = {}) => {
+    const c = clients.find((x) => x.id === id);
+    if (!c || c.status === status) return;
+    updateClient(id, (x) => ({ ...x, status }), "Status alterado para " + statusMeta(status).label);
+    if (!silent) notify({ title: c.nome + " movido para " + statusMeta(status).label, kind: "info", duration: 2500 });
+  };
+  const patchClient = (id, patch, logText) => updateClient(id, (c) => ({ ...c, ...patch }), logText);
+  const onDrop = (status) => { if (dragId.current) { moveClient(dragId.current, status); dragId.current = null; } };
+
+  const toggleTask = (clientId, taskId) =>
+    updateClient(clientId, (c) => ({ ...c, tasks: c.tasks.map((t) => (t.id === taskId ? { ...t, feito: !t.feito } : t)) }),
+      (c) => { const t = c.tasks.find((x) => x.id === taskId); return t && !t.feito ? "Tarefa concluída: " + t.titulo : null; });
+
+  /* ---- módulos ---- */
+  const addModule = (newMod) => {
+    setModules((ms) => [...ms, { ...newMod, clients: [] }]);
+    setActiveModId(newMod.id); setModuleManagerOpen(false); setView("dashboard");
+    notify({ title: "Módulo criado", message: newMod.nome });
+  };
+  const deleteModule = (id) => {
+    const m = modules.find((x) => x.id === id);
+    askConfirm({
+      title: "Excluir o módulo " + (m ? m.nome : "") + "?",
+      message: "Todos os " + (m ? m.clients.length : 0) + " cliente(s) deste módulo serão apagados. Faça um backup antes, se precisar.",
+      confirmLabel: "Excluir módulo", danger: true,
+      onConfirm: () => {
+        setModules((ms) => {
+          const left = ms.filter((x) => x.id !== id);
+          if (left.length === 0) return ms;
+          if (id === activeModId) setActiveModId(left[0].id);
+          return left;
+        });
+        notify({ title: "Módulo excluído", kind: "info" });
+      },
+    });
+  };
+  const switchModule = (id) => { setActiveModId(id); setOpenId(null); setQuery(""); setFilterStatus("todos"); setSidebarOpen(false); };
+  const resetData = () => askConfirm({
+    title: "Restaurar dados de exemplo?",
+    message: "Isso apaga tudo o que foi salvo neste navegador e volta aos dados iniciais de demonstração.",
+    confirmLabel: "Restaurar", danger: true,
+    onConfirm: () => { clearSavedModules(); setModules(initialModules); setActiveModId(initialModules[0].id); setSettingsOpen(false); notify({ title: "Dados de exemplo restaurados", kind: "info" }); },
+  });
+  const importData = (parsed) => {
+    const mods = parsed.map(hydrateModule);
+    askConfirm({
+      title: "Importar backup?",
+      message: "Os dados atuais serão substituídos por " + mods.length + " módulo(s) e " + mods.reduce((s, m) => s + m.clients.length, 0) + " cliente(s) do arquivo.",
+      confirmLabel: "Importar",
+      onConfirm: () => { setModules(mods); setActiveModId(mods[0].id); setOpenId(null); setSettingsOpen(false); notify({ title: "Backup importado" }); },
+    });
+  };
+
+  /* ---- derivados ---- */
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return clients.filter((c) => {
+      const matchQ = !q || [c.nome, c.empresa, c.email, c.telefone].some((v) => (v || "").toLowerCase().includes(q));
+      const matchS = filterStatus === "todos" || c.status === filterStatus;
+      return matchQ && matchS;
+    });
+  }, [clients, query, filterStatus]);
+
+  const sorted = useMemo(() => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const val = (c) => {
+      switch (sort.key) {
+        case "nome": return (c.nome || "").toLowerCase();
+        case "empresa": return (c.empresa || "").toLowerCase();
+        case "status": return STATUSES.findIndex((s) => s.key === c.status);
+        case "valor": return clientValue(mod, c);
+        case "itens": return c.items.length;
+        default: return c.updatedAt || "";
+      }
+    };
+    return [...filtered].sort((a, b) => { const x = val(a), y = val(b); return x < y ? -dir : x > y ? dir : 0; });
+  }, [filtered, sort, mod]);
+
+  /* ---- teclado e scroll ---- */
+  const anyOverlay = !!(openId || formOpen || moduleManagerOpen || settingsOpen || confirmState || sidebarOpen);
+  useEffect(() => { document.body.style.overflow = anyOverlay ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [anyOverlay]);
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        if (confirmState) setConfirmState(null);
+        else if (formOpen) { setFormOpen(false); setEditing(null); }
+        else if (settingsOpen) setSettingsOpen(false);
+        else if (moduleManagerOpen) setModuleManagerOpen(false);
+        else if (openId) setOpenId(null);
+        else if (sidebarOpen) setSidebarOpen(false);
+      } else if (e.key === "/" && !isTyping(e.target) && !anyOverlay) {
+        e.preventDefault();
+        if (view === "dashboard") setView("clientes");
+        setTimeout(() => searchRef.current && searchRef.current.focus(), 0);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmState, formOpen, settingsOpen, moduleManagerOpen, openId, sidebarOpen, anyOverlay, view]);
+
+  const openNew = () => { setEditing(null); setFormOpen(true); setSidebarOpen(false); };
+  const goView = (v) => { setView(v); setSidebarOpen(false); };
+  const onSearch = (v) => { setQuery(v); if (v && view === "dashboard") setView("clientes"); };
+
+  const titles = {
+    dashboard: { title: "Painel", subtitle: greeting() + " · " + longToday() },
+    clientes: { title: "Clientes", subtitle: filtered.length === clients.length ? clients.length + (clients.length === 1 ? " cliente" : " clientes") + " em " + mod.nome : filtered.length + " de " + clients.length + " clientes" },
+    funil: { title: "Funil de vendas", subtitle: "Arraste os cards entre as etapas para atualizar o status" },
+  };
+
+  const sidebarProps = { modules, mod, view, onSwitch: switchModule, onView: goView, onManage: () => { setModuleManagerOpen(true); setSidebarOpen(false); }, onSettings: () => { setSettingsOpen(true); setSidebarOpen(false); }, savedAt };
+
+  return (
+    <div className="min-h-screen bg-canvas text-ink">
+      <Sidebar {...sidebarProps} className="hidden lg:flex" />
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="absolute inset-0 bg-ink/40 anim-fade" onClick={() => setSidebarOpen(false)} />
+          <Sidebar {...sidebarProps} className="flex anim-slide-left" onClose={() => setSidebarOpen(false)} />
+        </div>
+      )}
+
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-slate-200 bg-white px-3 lg:hidden">
+          <IconBtn title="Abrir menu" onClick={() => setSidebarOpen(true)}><I.Menu size={22} /></IconBtn>
+          <Logo height={22} />
+          <button onClick={openNew} className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-white" aria-label="Novo cliente"><I.Plus size={20} /></button>
+        </header>
+
+        <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                <span className="flex h-4 w-4 items-center justify-center rounded text-white" style={{ background: mod.accent }}>{React.createElement(I[mod.icon] || I.Grid, { size: 10 })}</span>
+                {mod.nome}
+              </div>
+              <h1 className="text-2xl font-bold tracking-tight text-ink">{titles[view].title}</h1>
+              <p className="mt-0.5 text-sm text-slate-500">{titles[view].subtitle}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="relative min-w-[240px] flex-1 lg:w-80">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><I.Search size={17} /></span>
+                <input ref={searchRef} value={query} onChange={(e) => onSearch(e.target.value)} placeholder="Buscar cliente, empresa, e-mail…" className={inputCls + " pl-9 pr-9"} aria-label="Buscar clientes" />
+                {query
+                  ? <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Limpar busca"><I.X size={15} /></button>
+                  : <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 sm:block"><Kbd>/</Kbd></span>}
+              </div>
+              <button onClick={openNew} className={btn.primary + " hidden lg:inline-flex"}><I.Plus size={18} /> Novo cliente</button>
+            </div>
+          </div>
+
+          {view !== "dashboard" && (
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              <span className="mr-1 hidden items-center gap-1 text-xs font-medium text-slate-400 sm:inline-flex"><I.Filter size={13} /> Etapa</span>
+              <FilterChip active={filterStatus === "todos"} onClick={() => setFilterStatus("todos")} count={clients.length}>Todos</FilterChip>
+              {STATUSES.map((s) => (
+                <FilterChip key={s.key} active={filterStatus === s.key} onClick={() => setFilterStatus(filterStatus === s.key ? "todos" : s.key)} status={s} count={clients.filter((c) => c.status === s.key).length}>{s.label}</FilterChip>
+              ))}
+            </div>
+          )}
+
+          {view === "dashboard" && <Dashboard mod={mod} clients={clients} onOpen={setOpenId} onToggleTask={toggleTask} onGo={goView} onNew={openNew} />}
+          {view === "clientes" && <ClientsTable mod={mod} clients={sorted} total={clients.length} sort={sort} onSort={setSort} onOpen={setOpenId} onNew={openNew} hasFilter={!!query || filterStatus !== "todos"} onClear={() => { setQuery(""); setFilterStatus("todos"); }} />}
+          {view === "funil" && <Funnel mod={mod} clients={filtered} onOpen={setOpenId} dragId={dragId} onDrop={onDrop} onNew={openNew} />}
+        </main>
+      </div>
+
+      {openClient && (
+        <ClientDrawer mod={mod} client={openClient} onClose={() => setOpenId(null)}
+          onEdit={() => { setEditing(openClient); setFormOpen(true); }}
+          onDelete={() => removeClient(openClient.id)}
+          patch={(p, log) => patchClient(openClient.id, p, log)}
+          changeStatus={(s) => moveClient(openClient.id, s, { silent: true })}
+          notify={notify} />
+      )}
+      {formOpen && <ClientForm mod={mod} initial={editing} onClose={() => { setFormOpen(false); setEditing(null); }} onSave={saveClient} />}
+      {moduleManagerOpen && <ModuleManager modules={modules} onClose={() => setModuleManagerOpen(false)} onAdd={addModule} onDelete={deleteModule} />}
+      {settingsOpen && <SettingsModal modules={modules} mod={mod} savedAt={savedAt} onClose={() => setSettingsOpen(false)} onReset={resetData} onImport={importData} notify={notify} />}
+      {confirmState && <ConfirmDialog {...confirmState} onCancel={() => setConfirmState(null)} onConfirm={() => { const fn = confirmState.onConfirm; setConfirmState(null); fn && fn(); }} />}
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
+    </div>
+  );
+}
+
+/* -------------------------------- Sidebar --------------------------------- */
+function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, savedAt, className = "", onClose }) {
+  const NavItem = ({ id, icon: IconC, children, badge }) => (
+    <button onClick={() => onView(id)}
+      className={"flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition " + (view === id ? "bg-brand-50 text-brand" : "text-slate-600 hover:bg-slate-100 hover:text-ink")}>
+      <IconC size={18} className={view === id ? "text-brand" : "text-slate-400"} />
+      <span className="flex-1 text-left">{children}</span>
+      {badge != null && <span className={"rounded-full px-2 py-0.5 text-[11px] font-semibold tnum " + (view === id ? "bg-white text-brand" : "bg-slate-100 text-slate-500")}>{badge}</span>}
+    </button>
+  );
+  const totalPend = mod.clients.reduce((s, c) => s + overdueTasks(c).length, 0);
+  return (
+    <aside className={"fixed inset-y-0 left-0 z-30 w-64 flex-col border-r border-slate-200 bg-white " + className}>
+      <div className="flex h-16 items-center justify-between border-b border-slate-100 px-5">
+        <Logo />
+        {onClose && <IconBtn title="Fechar menu" onClick={onClose}><I.X size={18} /></IconBtn>}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <SectionLabel>Módulos de produto</SectionLabel>
+        <div className="space-y-0.5">
+          {modules.map((m) => {
+            const MIcon = I[m.icon] || I.Grid;
+            const active = m.id === mod.id;
+            return (
+              <button key={m.id} onClick={() => onSwitch(m.id)}
+                className={"flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm transition " + (active ? "bg-slate-100 font-semibold text-ink" : "text-slate-600 hover:bg-slate-50")}>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white" style={{ background: m.accent }}><MIcon size={15} /></span>
+                <span className="flex-1 truncate">{m.nome}</span>
+                <span className="text-xs tnum text-slate-400">{m.clients.length}</span>
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={onManage} className="mt-1.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-brand transition hover:bg-brand-50">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-brand/40"><I.Plus size={15} /></span>
+          Gerenciar módulos
+        </button>
+
+        <div className="mt-6">
+          <SectionLabel>Navegação</SectionLabel>
+          <div className="space-y-0.5">
+            <NavItem id="dashboard" icon={I.Dash}>Painel</NavItem>
+            <NavItem id="clientes" icon={I.List} badge={mod.clients.length}>Clientes</NavItem>
+            <NavItem id="funil" icon={I.Kanban}>Funil de vendas</NavItem>
+          </div>
+        </div>
+
+        {totalPend > 0 && (
+          <div className="mt-6 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-xs text-red-800">
+            <div className="flex items-center gap-1.5 font-semibold"><I.Alert size={14} /> {totalPend} {totalPend === 1 ? "follow-up atrasado" : "follow-ups atrasados"}</div>
+            <button onClick={() => onView("dashboard")} className="mt-1 font-medium underline-offset-2 hover:underline">Ver no painel</button>
+          </div>
+        )}
+      </div>
+
+      <div className="border-t border-slate-100 px-3 py-3">
+        <button onClick={onSettings} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink">
+          <I.Cog size={18} className="text-slate-400" /> Configurações e backup
+        </button>
+        <div className="mt-1 flex items-center gap-2 px-3 py-1.5 text-[11px] text-slate-400" title={savedAt ? "Último salvamento: " + fmtDateTime(new Date(savedAt).toISOString()) : ""}>
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Salvo automaticamente neste navegador
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function FilterChip({ active, onClick, status, count, children }) {
+  return (
+    <button onClick={onClick}
+      className={"inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition " + (active ? "border-transparent shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")}
+      style={active ? (status ? { background: status.soft, color: status.text } : { background: "#1A1A2E", color: "#fff" }) : undefined}>
+      {status && <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.color }} />}
+      {children}
+      {count != null && <span className={"tnum " + (active ? "opacity-70" : "text-slate-400")}>{count}</span>}
+    </button>
+  );
+}
+
+/* ------------------------------- Dashboard -------------------------------- */
+function KpiCard({ icon: IconC, label, value, sub, tone = "brand" }) {
+  const tones = {
+    brand: "bg-brand-50 text-brand", green: "bg-emerald-50 text-emerald-700", amber: "bg-amber-50 text-amber-700", violet: "bg-violet-50 text-violet-700",
+  };
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+          <div className="mt-2 truncate text-[26px] font-bold leading-none tracking-tight text-ink tnum">{value}</div>
+          {sub && <div className="mt-2 text-xs text-slate-500">{sub}</div>}
+        </div>
+        <div className={"flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " + tones[tone]}><IconC size={20} /></div>
+      </div>
+    </Card>
+  );
+}
+
+function Dashboard({ mod, clients, onOpen, onToggleTask, onGo, onNew }) {
+  const m = useMemo(() => {
+    const total = clients.length;
+    const by = Object.fromEntries(STATUSES.map((s) => [s.key, { n: 0, v: 0 }]));
+    clients.forEach((c) => { const b = by[c.status] || by.lead; b.n += 1; b.v += clientValue(mod, c); });
+    const decididos = by.fechado.n + by.perdido.n;
+    const conv = decididos ? Math.round((by.fechado.n / decididos) * 100) : 0;
+    const receita = clients.filter((c) => c.status === "fechado").reduce((sum, c) =>
+      sum + c.items.filter((it) => it.status === "contratado" || !("status" in it)).reduce((s, it) => s + itemValue(mod, it), 0), 0);
+    const pipeline = by.lead.v + by.negociacao.v;
+    return { total, by, conv, receita, pipeline, decididos, ativos: total - by.perdido.n };
+  }, [clients, mod]);
+
+  const tasks = useMemo(() => {
+    const list = [];
+    clients.forEach((c) => (c.tasks || []).forEach((t) => !t.feito && list.push({ ...t, cliente: c.nome, clientId: c.id, d: daysUntil(t.data) })));
+    list.sort((a, b) => (a.data || "9999").localeCompare(b.data || "9999"));
+    const g = { atrasados: [], hoje: [], proximos: [], depois: [] };
+    list.forEach((t) => { if (t.d == null) g.depois.push(t); else if (t.d < 0) g.atrasados.push(t); else if (t.d === 0) g.hoje.push(t); else if (t.d <= 7) g.proximos.push(t); else g.depois.push(t); });
+    return { list, g };
+  }, [clients]);
+
+  const recent = useMemo(() => [...clients].sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")).slice(0, 5), [clients]);
+  const activity = useMemo(() => {
+    const list = [];
+    clients.forEach((c) => (c.history || []).forEach((h) => list.push({ ...h, cliente: c.nome, clientId: c.id })));
+    return list.sort((a, b) => (b.at || "").localeCompare(a.at || "")).slice(0, 8);
+  }, [clients]);
+
+  if (clients.length === 0) {
+    return (
+      <Card>
+        <EmptyState icon={I.Inbox} title={"Nenhum cliente em " + mod.nome} text="Cadastre o primeiro cliente deste módulo para ver o painel ganhar vida."
+          action={<button onClick={onNew} className={btn.primary}><I.Plus size={18} /> Cadastrar cliente</button>} />
+      </Card>
+    );
+  }
+
+  const TaskRow = ({ t, tone }) => (
+    <li className="flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-slate-50">
+      <button onClick={() => onToggleTask(t.clientId, t.id)} title="Concluir tarefa" aria-label="Concluir tarefa"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-slate-300 text-transparent transition hover:border-emerald-500 hover:bg-emerald-500 hover:text-white">
+        <I.CheckSimple size={12} />
+      </button>
+      <button onClick={() => onOpen(t.clientId)} className="min-w-0 flex-1 text-left">
+        <span className="block truncate text-sm font-medium text-ink">{t.titulo}</span>
+        <span className="block truncate text-xs text-slate-500">{t.cliente}</span>
+      </button>
+      <span className={"shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold tnum " + (tone === "red" ? "bg-red-50 text-red-700" : tone === "amber" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500")}>
+        {t.d == null ? "sem data" : t.d < 0 ? Math.abs(t.d) + (t.d === -1 ? " dia atrás" : " dias atrás") : t.d === 0 ? "hoje" : t.d === 1 ? "amanhã" : fmtDate(t.data).slice(0, 5)}
+      </span>
+    </li>
+  );
+  const TaskGroup = ({ label, items, tone }) => items.length === 0 ? null : (
+    <div>
+      <div className={"mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide " + (tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-700" : "text-slate-400")}>{label} · {items.length}</div>
+      <ul>{items.map((t) => <TaskRow key={t.id} t={t} tone={tone} />)}</ul>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard icon={I.Users} label="Clientes ativos" value={m.ativos} sub={m.total + " no total · " + m.by.perdido.n + " perdido(s)"} tone="brand" />
+        <KpiCard icon={I.Trend} label="Em negociação" value={m.by.negociacao.n} sub={BRL(m.pipeline) + " em pipeline (lead + negociação)"} tone="amber" />
+        <KpiCard icon={I.Handshake} label="Negócios fechados" value={m.by.fechado.n} sub={BRL(m.receita) + " em receita contratada"} tone="green" />
+        <KpiCard icon={I.Target} label="Taxa de conversão" value={m.conv + "%"} sub={m.by.fechado.n + " fechado(s) de " + m.decididos + " decidido(s)"} tone="violet" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader title="Funil por etapa" subtitle="Quantidade de clientes e valor somado em cada etapa"
+            action={<button onClick={() => onGo("funil")} className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline">Abrir funil <I.ChevR size={14} /></button>} />
+          <div className="px-5 pb-5 pt-4">
+            <div className="flex h-3 w-full gap-[2px] overflow-hidden rounded-full bg-slate-100" role="img" aria-label="Distribuição de clientes por etapa">
+              {STATUSES.map((s) => {
+                const pct = m.total ? (m.by[s.key].n / m.total) * 100 : 0;
+                return pct > 0 ? <div key={s.key} className="h-full rounded-sm transition-all" style={{ width: pct + "%", background: s.color }} title={s.label + ": " + m.by[s.key].n} /> : null;
+              })}
+            </div>
+            <ul className="mt-4 divide-y divide-slate-100">
+              {STATUSES.map((s) => {
+                const b = m.by[s.key];
+                const pct = m.total ? Math.round((b.n / m.total) * 100) : 0;
+                return (
+                  <li key={s.key} className="flex items-center gap-3 py-2.5 text-sm">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                    <span className="min-w-0 flex-1 truncate font-medium text-slate-700 sm:w-32 sm:flex-none">{s.label}</span>
+                    <div className="hidden h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 sm:block"><div className="h-full rounded-full" style={{ width: pct + "%", background: s.color }} /></div>
+                    <span className="hidden w-12 text-right text-xs text-slate-400 tnum md:inline">{pct}%</span>
+                    <span className="w-8 shrink-0 text-right font-semibold text-ink tnum">{b.n}</span>
+                    <span className="w-28 shrink-0 text-right text-slate-500 tnum">{BRL(b.v)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader title="Follow-ups" icon={I.Bell} subtitle={tasks.list.length ? tasks.list.length + " pendente(s)" : "Nada pendente"} />
+          <div className="px-3 pb-4 pt-3">
+            {tasks.list.length === 0 ? (
+              <EmptyState icon={I.Check} title="Tudo em dia" text="Adicione lembretes dentro do card de cada cliente." />
+            ) : (
+              <div className="space-y-3">
+                <TaskGroup label="Atrasados" items={tasks.g.atrasados} tone="red" />
+                <TaskGroup label="Hoje" items={tasks.g.hoje} tone="amber" />
+                <TaskGroup label="Próximos 7 dias" items={tasks.g.proximos} />
+                <TaskGroup label="Mais adiante" items={tasks.g.depois.slice(0, 4)} />
+              </div>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
+          <CardHeader title="Atualizados recentemente" subtitle="Os últimos clientes que tiveram movimentação"
+            action={<button onClick={() => onGo("clientes")} className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline">Ver todos <I.ChevR size={14} /></button>} />
+          <ul className="mt-3 divide-y divide-slate-100">
+            {recent.map((c) => (
+              <li key={c.id}>
+                <button onClick={() => onOpen(c.id)} className="flex w-full items-center gap-3 px-5 py-3 text-left transition hover:bg-slate-50">
+                  <Avatar name={c.nome} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-ink">{c.nome}</div>
+                    <div className="truncate text-xs text-slate-500">{c.empresa || "—"}{c.items.length ? " · " + c.items.length + " " + (c.items.length === 1 ? mod.itemLabel.toLowerCase() : mod.itemLabelPlural.toLowerCase()) : ""}</div>
+                  </div>
+                  <span className="hidden text-xs text-slate-400 sm:block">{relTime(c.updatedAt)}</span>
+                  <StatusBadge status={c.status} size="xs" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card>
+          <CardHeader title="Atividade recente" icon={I.Activity} />
+          <div className="px-5 pb-5 pt-3">
+            {activity.length === 0 ? <p className="text-xs text-slate-400">Sem registros ainda.</p> : (
+              <ol className="relative ml-1.5 border-l border-slate-200 pl-4">
+                {activity.map((h) => (
+                  <li key={h.id} className="relative pb-3.5 last:pb-0">
+                    <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-slate-300" />
+                    <button onClick={() => onOpen(h.clientId)} className="text-left">
+                      <span className="block text-xs font-medium leading-snug text-slate-700">{h.text}</span>
+                      <span className="block text-[11px] text-slate-400">{h.cliente} · {relTime(h.at)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------- Tabela de clientes ------------------------- */
+function ClientsTable({ mod, clients, total, sort, onSort, onOpen, onNew, hasFilter, onClear }) {
+  const Th = ({ k, children, className = "", align = "left" }) => {
+    const active = sort.key === k;
+    return (
+      <th className={"px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 " + className}>
+        <button onClick={() => onSort({ key: k, dir: active && sort.dir === "asc" ? "desc" : "asc" })}
+          className={"inline-flex items-center gap-1 transition hover:text-ink " + (align === "right" ? "flex-row-reverse" : "") + (active ? " text-ink" : "")}>
+          {children}
+          <span className={active ? "text-brand" : "text-slate-300"}>{active ? (sort.dir === "asc" ? <I.ChevU size={13} /> : <I.ChevD size={13} />) : <I.Sort size={13} />}</span>
+        </button>
+      </th>
+    );
+  };
+  return (
+    <Card className="overflow-hidden">
+      {clients.length === 0 ? (
+        hasFilter
+          ? <EmptyState icon={I.Search} title="Nenhum cliente encontrado" text="Tente outro termo ou limpe os filtros." action={<button onClick={onClear} className={btn.secondary}>Limpar filtros</button>} />
+          : <EmptyState icon={I.Inbox} title={"Nenhum cliente em " + mod.nome} text="Cadastre o primeiro cliente deste módulo." action={<button onClick={onNew} className={btn.primary}><I.Plus size={18} /> Cadastrar cliente</button>} />
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50/80">
+                <tr>
+                  <Th k="nome">Cliente</Th>
+                  <Th k="empresa" className="hidden md:table-cell">Empresa</Th>
+                  <th className="hidden px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:table-cell">Contato</th>
+                  <Th k="status">Etapa</Th>
+                  <Th k="itens" className="hidden text-right sm:table-cell" align="right">{mod.itemLabelPlural.split(" ")[0]}</Th>
+                  <Th k="valor" className="text-right" align="right">Valor</Th>
+                  <Th k="updatedAt" className="hidden text-right xl:table-cell" align="right">Atualizado</Th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {clients.map((c) => {
+                  const od = overdueTasks(c).length;
+                  return (
+                    <tr key={c.id} onClick={() => onOpen(c.id)} className="group cursor-pointer transition hover:bg-brand-50/40">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar name={c.nome} size={36} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 truncate font-semibold text-ink">{c.nome}{od > 0 && <span className="text-red-500" title={od + " follow-up(s) atrasado(s)"}><I.Alert size={14} /></span>}</div>
+                            <div className="truncate text-xs text-slate-500">{c.email || "sem e-mail"}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="hidden px-4 py-3 text-slate-700 md:table-cell">{c.empresa || <span className="text-slate-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-slate-500 tnum lg:table-cell">{c.telefone || <span className="text-slate-300">—</span>}</td>
+                      <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
+                      <td className="hidden px-4 py-3 text-right text-slate-600 tnum sm:table-cell">{c.items.length}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-ink tnum">{clientValue(mod, c) ? BRL(clientValue(mod, c)) : <span className="font-normal text-slate-300">—</span>}</td>
+                      <td className="hidden px-4 py-3 text-right text-xs text-slate-400 xl:table-cell">{relTime(c.updatedAt)}</td>
+                      <td className="pr-3 text-slate-300 group-hover:text-brand"><I.ChevR size={18} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
+            <span>Mostrando <b className="text-slate-700">{clients.length}</b> de {total}</span>
+            <span className="hidden sm:inline">Clique em uma linha para abrir o cliente</span>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/* --------------------------------- Funnel --------------------------------- */
+function Funnel({ mod, clients, onOpen, dragId, onDrop, onNew }) {
+  const [over, setOver] = useState(null);
+  const [grabbing, setGrabbing] = useState(null);
+  const totalPipeline = clients.filter((c) => c.status !== "perdido").reduce((s, c) => s + clientValue(mod, c), 0);
+
+  if (clients.length === 0) {
+    return <Card><EmptyState icon={I.Kanban} title="Funil vazio" text="Nenhum cliente corresponde aos filtros atuais." action={<button onClick={onNew} className={btn.primary}><I.Plus size={18} /> Novo cliente</button>} /></Card>;
+  }
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-slate-500">
+        <span><b className="text-ink tnum">{clients.length}</b> {clients.length === 1 ? "cliente" : "clientes"}</span>
+        <span>Valor em aberto + fechado: <b className="text-ink tnum">{BRL(totalPipeline)}</b></span>
+      </div>
+      <div className="-mx-4 flex gap-4 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 xl:mx-0 xl:grid xl:grid-cols-4 xl:overflow-visible xl:px-0">
+        {STATUSES.map((s) => {
+          const cards = clients.filter((c) => c.status === s.key);
+          const colTotal = cards.reduce((sum, c) => sum + clientValue(mod, c), 0);
+          const isOver = over === s.key && grabbing;
+          return (
+            <div key={s.key}
+              onDragOver={(e) => { e.preventDefault(); setOver(s.key); }}
+              onDragLeave={() => setOver((o) => (o === s.key ? null : o))}
+              onDrop={() => { onDrop(s.key); setOver(null); setGrabbing(null); }}
+              className={"flex w-[290px] shrink-0 flex-col rounded-2xl border transition xl:w-auto " + (isOver ? "border-brand bg-brand-50/60 ring-4 ring-brand/10" : "border-slate-200 bg-slate-100/60")}>
+              <div className="px-4 pb-3 pt-3.5">
+                <div className="mb-2.5 h-1 w-full rounded-full" style={{ background: s.color }} />
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-ink">{s.label}</span>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-slate-600 shadow-sm tnum">{cards.length}</span>
+                </div>
+                <div className="mt-0.5 text-xs text-slate-500 tnum">{BRL(colTotal)}</div>
+              </div>
+              <div className="flex min-h-[140px] flex-1 flex-col gap-2.5 overflow-y-auto px-3 pb-3 xl:max-h-[calc(100vh-330px)]">
+                {cards.map((c) => {
+                  const pend = pendingTasks(c).length, od = overdueTasks(c).length, val = clientValue(mod, c);
+                  return (
+                    <article key={c.id} draggable
+                      onDragStart={() => { dragId.current = c.id; setGrabbing(c.id); }}
+                      onDragEnd={() => { setGrabbing(null); setOver(null); }}
+                      onClick={() => onOpen(c.id)}
+                      className={"cursor-grab rounded-xl border bg-white p-3.5 shadow-card transition hover:-translate-y-px hover:border-brand/40 hover:shadow-pop active:cursor-grabbing " + (grabbing === c.id ? "border-brand opacity-50" : "border-slate-200")}>
+                      <div className="flex items-start gap-2.5">
+                        <Avatar name={c.nome} size={32} />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-ink">{c.nome}</div>
+                          <div className="truncate text-xs text-slate-500">{c.empresa || "—"}</div>
+                        </div>
+                      </div>
+                      {c.items.length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-1">
+                          {c.items.slice(0, 3).map((it) => (
+                            <span key={it.id} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{itemTitle(mod, it)}</span>
+                          ))}
+                          {c.items.length > 3 && <span className="self-center text-[11px] text-slate-400">+{c.items.length - 3}</span>}
+                        </div>
+                      )}
+                      <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px]">
+                        <span className="font-semibold text-slate-700 tnum">{val > 0 ? BRL(val) : <span className="font-normal text-slate-300">sem valor</span>}</span>
+                        {pend > 0
+                          ? <span className={"inline-flex items-center gap-1 font-medium " + (od > 0 ? "text-red-600" : "text-amber-700")}>{od > 0 ? <I.Alert size={12} /> : <I.Bell size={12} />} {od > 0 ? od + (od === 1 ? " atrasada" : " atrasadas") : pend + (pend === 1 ? " tarefa" : " tarefas")}</span>
+                          : <span className="text-slate-400">{relTime(c.updatedAt)}</span>}
+                      </div>
+                    </article>
+                  );
+                })}
+                {cards.length === 0 && (
+                  <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-300 py-6 text-xs text-slate-400">Solte um card aqui</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ Client drawer ----------------------------- */
+function ClientDrawer({ mod, client, onClose, onEdit, onDelete, patch, changeStatus, notify }) {
+  const [tab, setTab] = useState("resumo");
+  const [draft, setDraft] = useState(() => newItem(mod));
+  const [taskDraft, setTaskDraft] = useState({ titulo: "", data: "" });
+
+  const hasStatus = mod.fields.some((f) => f.type === "status");
+  const totalInteresse = client.items.filter((it) => !hasStatus || it.status === "interesse").reduce((s, it) => s + itemValue(mod, it), 0);
+  const totalContratado = client.items.filter((it) => it.status === "contratado").reduce((s, it) => s + itemValue(mod, it), 0);
+  const first = (client.nome || "").split(" ")[0];
+  const waLink = "https://wa.me/55" + onlyDigits(client.telefone) + "?text=" + encodeURIComponent("Olá " + first + ", aqui é da Próspera.");
+  const mailLink = "mailto:" + client.email + "?subject=" + encodeURIComponent("Próspera — " + mod.nome) + "&body=" + encodeURIComponent("Olá " + first + ",\n\n");
+  const telLink = "tel:+55" + onlyDigits(client.telefone);
+
+  const addItem = () => {
+    const it = { ...draft, id: uid() };
+    patch({ items: [...client.items, it] }, mod.itemLabel + " adicionado: " + itemTitle(mod, it));
+    setDraft(newItem(mod));
+    notify({ title: mod.itemLabel + " adicionado", message: itemTitle(mod, it), duration: 2500 });
+  };
+  const removeItem = (id) => { const it = client.items.find((x) => x.id === id); patch({ items: client.items.filter((x) => x.id !== id) }, it ? mod.itemLabel + " removido: " + itemTitle(mod, it) : null); };
+  const toggleItemStatus = (id) => {
+    const it = client.items.find((x) => x.id === id);
+    const next = it && it.status === "interesse" ? "contratado" : "interesse";
+    patch({ items: client.items.map((x) => x.id === id ? { ...x, status: next } : x) }, it ? itemTitle(mod, it) + " marcado como " + (next === "contratado" ? "contratado" : "de interesse") : null);
+  };
+  const addTask = () => {
+    if (!taskDraft.titulo.trim()) return;
+    patch({ tasks: [...(client.tasks || []), { id: uid(), titulo: taskDraft.titulo.trim(), data: taskDraft.data, feito: false }] }, "Tarefa criada: " + taskDraft.titulo.trim());
+    setTaskDraft({ titulo: "", data: "" });
+  };
+  const toggleTask = (id) => { const t = client.tasks.find((x) => x.id === id); patch({ tasks: client.tasks.map((x) => x.id === id ? { ...x, feito: !x.feito } : x) }, t && !t.feito ? "Tarefa concluída: " + t.titulo : null); };
+  const removeTask = (id) => patch({ tasks: client.tasks.filter((t) => t.id !== id) });
+  const setDraftField = (fid, val) => setDraft((d) => ({ ...d, [fid]: val }));
+
+  const pend = pendingTasks(client).length, od = overdueTasks(client).length;
+  const tabs = [
+    { key: "resumo", label: "Resumo" },
+    { key: "itens", label: mod.itemLabelPlural.split(" ")[0], n: client.items.length },
+    { key: "tarefas", label: "Tarefas", n: pend, alert: od > 0 },
+  ];
+  const sortedTasks = [...(client.tasks || [])].sort((a, b) => (a.feito - b.feito) || (a.data || "9999").localeCompare(b.data || "9999"));
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true" aria-label={"Cliente " + client.nome}>
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px] anim-fade" onClick={onClose} />
+      <div className="relative flex h-full w-full max-w-[620px] flex-col bg-white shadow-pop anim-slide-right">
+        <div className="border-b border-slate-100 px-6 pb-0 pt-5">
+          <div className="flex items-start gap-3.5">
+            <Avatar name={client.nome} size={48} />
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-lg font-bold leading-tight text-ink">{client.nome}</h2>
+              <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm text-slate-500"><I.Building size={14} /> {client.empresa || "Empresa não informada"}</p>
+              <div className="mt-2.5"><StatusMenu value={client.status} onChange={changeStatus} align="left" /></div>
+            </div>
+            <div className="flex items-center gap-0.5">
+              <IconBtn title="Editar cliente" onClick={onEdit}><I.Pencil size={18} /></IconBtn>
+              <IconBtn title="Excluir cliente" onClick={onDelete} danger><I.Trash size={18} /></IconBtn>
+              <IconBtn title="Fechar (Esc)" onClick={onClose}><I.X size={20} /></IconBtn>
+            </div>
+          </div>
+          <nav className="-mb-px mt-4 flex gap-1" aria-label="Seções do cliente">
+            {tabs.map((t) => (
+              <button key={t.key} onClick={() => setTab(t.key)}
+                className={"inline-flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium transition " + (tab === t.key ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-ink")}>
+                {t.label}
+                {t.n != null && <span className={"rounded-full px-1.5 py-0.5 text-[11px] font-semibold tnum " + (t.alert ? "bg-red-50 text-red-700" : tab === t.key ? "bg-brand-50 text-brand" : "bg-slate-100 text-slate-500")}>{t.n}</span>}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {tab === "resumo" && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <ContactRow icon={I.Phone} label="Telefone" value={client.telefone} />
+                <ContactRow icon={I.Mail} label="E-mail" value={client.email} />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <a href={waLink} target="_blank" rel="noreferrer" aria-disabled={!onlyDigits(client.telefone)}
+                  className={"inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 " + (onlyDigits(client.telefone) ? "" : "pointer-events-none opacity-40")} style={{ background: "#25D366" }}>
+                  <I.Chat size={17} /> WhatsApp</a>
+                <a href={telLink} className={btn.secondary + " px-3 " + (onlyDigits(client.telefone) ? "" : "pointer-events-none opacity-40")}><I.Phone size={17} /> Ligar</a>
+                <a href={mailLink} className={btn.secondary + " px-3 " + (client.email ? "" : "pointer-events-none opacity-40")}><I.Mail size={17} /> E-mail</a>
+              </div>
+
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Observações</h3>
+                  <button onClick={onEdit} className="text-xs font-semibold text-brand hover:underline">Editar</button>
+                </div>
+                {client.obs
+                  ? <p className="whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">{client.obs}</p>
+                  : <p className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-xs text-slate-400">Nenhuma observação. Anote contexto, histórico e próximos passos.</p>}
+              </section>
+
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">{mod.itemLabelPlural}</h3>
+                  <button onClick={() => setTab("itens")} className="text-xs font-semibold text-brand hover:underline">Gerenciar</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {hasStatus && <div className="rounded-xl border border-slate-200 p-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">De interesse</div><div className="mt-1 text-base font-bold text-ink tnum">{BRL(totalInteresse)}</div></div>}
+                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">{hasStatus ? "Contratado" : "Total"}</div><div className="mt-1 text-base font-bold text-emerald-800 tnum">{BRL(hasStatus ? totalContratado : totalInteresse)}</div></div>
+                </div>
+                {client.items.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {client.items.map((it) => (
+                      <span key={it.id} className={"rounded-md px-2 py-1 text-xs font-medium " + (it.status === "contratado" ? "bg-emerald-50 text-emerald-800" : "bg-slate-100 text-slate-600")}>{itemTitle(mod, it)}</span>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Histórico</h3>
+                {(client.history || []).length === 0 ? <p className="text-xs text-slate-400">Sem registros.</p> : (
+                  <ol className="relative ml-1.5 border-l border-slate-200 pl-4">
+                    {client.history.slice(0, 10).map((h) => (
+                      <li key={h.id} className="relative pb-3 last:pb-0">
+                        <span className="absolute -left-[21px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-slate-300" />
+                        <div className="text-xs font-medium text-slate-700">{h.text}</div>
+                        <div className="text-[11px] text-slate-400">{fmtDateTime(h.at)}</div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                <p className="mt-3 text-[11px] text-slate-400">Cadastrado em {fmtDateTime(client.createdAt)}</p>
+              </section>
+            </div>
+          )}
+
+          {tab === "itens" && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-500">{client.items.length} {client.items.length === 1 ? mod.itemLabel.toLowerCase() : mod.itemLabelPlural.toLowerCase()}</div>
+                <div className="text-right text-xs text-slate-500">
+                  {hasStatus && <div>Interesse: <span className="font-semibold text-slate-700 tnum">{BRL(totalInteresse)}</span></div>}
+                  <div>{hasStatus ? "Contratado: " : "Total: "}<span className="font-semibold text-emerald-700 tnum">{BRL(hasStatus ? totalContratado : totalInteresse)}</span></div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {client.items.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-400">Nenhum {mod.itemLabel.toLowerCase()} registrado. Use o formulário abaixo.</p>}
+                {client.items.map((it) => <ItemCard key={it.id} mod={mod} item={it} onToggleStatus={() => toggleItemStatus(it.id)} onRemove={() => removeItem(it.id)} />)}
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 text-sm font-semibold text-ink">Adicionar {mod.itemLabel.toLowerCase()}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {mod.fields.map((f) => (
+                    <div key={f.id} className={(f.type === "text" || f.fromOptions) ? "col-span-2" : "col-span-1"}>
+                      <FieldInput mod={mod} field={f} value={draft[f.id]} onChange={(v) => setDraftField(f.id, v)} small />
+                    </div>
+                  ))}
+                </div>
+                <button onClick={addItem} className={btn.primary + " mt-3 w-full"}><I.Plus size={16} /> Adicionar {mod.itemLabel.toLowerCase()}</button>
+              </div>
+            </div>
+          )}
+
+          {tab === "tarefas" && (
+            <div className="space-y-5">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 text-sm font-semibold text-ink">Novo follow-up</div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input placeholder="Ex.: Ligar para confirmar proposta" value={taskDraft.titulo}
+                    onChange={(e) => setTaskDraft((d) => ({ ...d, titulo: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && addTask()} className={inputCls + " flex-1"} aria-label="Título da tarefa" />
+                  <input type="date" value={taskDraft.data} onChange={(e) => setTaskDraft((d) => ({ ...d, data: e.target.value }))} className={inputCls + " sm:w-44"} aria-label="Data da tarefa" />
+                  <button onClick={addTask} disabled={!taskDraft.titulo.trim()} className={btn.primary}><I.Plus size={16} /> Adicionar</button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {sortedTasks.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-400">Nenhum lembrete agendado para este cliente.</p>}
+                {sortedTasks.map((t) => {
+                  const late = isOverdue(t.data) && !t.feito;
+                  return (
+                    <div key={t.id} className={"flex items-center gap-3 rounded-xl border px-3.5 py-2.5 transition " + (t.feito ? "border-slate-100 bg-slate-50/60" : late ? "border-red-200 bg-red-50/40" : "border-slate-200 bg-white")}>
+                      <button onClick={() => toggleTask(t.id)} aria-label={t.feito ? "Reabrir tarefa" : "Concluir tarefa"}
+                        className={"flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition " + (t.feito ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300 text-transparent hover:border-emerald-500")}>
+                        <I.CheckSimple size={12} />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <div className={"truncate text-sm " + (t.feito ? "text-slate-400 line-through" : "font-medium text-ink")}>{t.titulo}</div>
+                        {t.data && <div className={"flex items-center gap-1 text-xs " + (late ? "font-semibold text-red-600" : "text-slate-500")}><I.Calendar size={12} /> {fmtDate(t.data)}{late ? " · atrasado" : daysUntil(t.data) === 0 && !t.feito ? " · hoje" : ""}</div>}
+                      </div>
+                      <IconBtn title="Remover tarefa" onClick={() => removeTask(t.id)} danger className="h-8 w-8"><I.X size={15} /></IconBtn>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-[11px] text-slate-400">
+          <span>Atualizado {relTime(client.updatedAt)}</span>
+          <span className="hidden sm:inline-flex items-center gap-1.5"><Kbd>Esc</Kbd> fecha</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ItemCard({ mod, item, onToggleStatus, onRemove }) {
+  const hasStatus = mod.fields.some((f) => f.type === "status");
+  const detailFields = mod.fields.filter((f) => f.type !== "status" && !f.fromOptions && f.type !== "currency");
+  const currencyField = mod.fields.find((f) => f.type === "currency");
+  const done = item.status === "contratado";
+  return (
+    <div className={"rounded-xl border px-4 py-3 transition " + (done ? "border-emerald-100 bg-emerald-50/40" : "border-slate-200 bg-white")}>
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-ink">{itemTitle(mod, item)}</div>
+          {hasStatus && (
+            <button onClick={onToggleStatus} title="Clique para alternar"
+              className={"mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition hover:brightness-95 " + (done ? "bg-emerald-100 text-emerald-800" : "bg-amber-50 text-amber-800")}>
+              <span className={"h-1.5 w-1.5 rounded-full " + (done ? "bg-emerald-600" : "bg-amber-500")} />{done ? "Contratado" : "De interesse"}
+            </button>
+          )}
+        </div>
+        {currencyField && <div className="text-sm font-semibold text-ink tnum">{BRL(item[currencyField.id])}</div>}
+        <IconBtn title={"Remover " + mod.itemLabel.toLowerCase()} onClick={onRemove} danger className="h-8 w-8"><I.X size={15} /></IconBtn>
+      </div>
+      {detailFields.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {detailFields.map((f) => {
+            const v = item[f.id];
+            if (v === "" || v === undefined || v === null || (f.type === "number" && !v)) return null;
+            return <span key={f.id} className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600"><span className="text-slate-400">{f.label}:</span> <span className="font-medium">{/%/.test(f.label) ? v + "%" : v}</span></span>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldInput({ mod, field, value, onChange, small }) {
+  const cls = inputCls + (small ? " py-2" : "");
+  const labelCls = small ? "mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500" : "mb-1.5 block text-sm font-medium text-slate-700";
+  if (field.fromOptions && mod.options && mod.options.length) {
+    return (
+      <label className="block"><span className={labelCls}>{field.label}</span>
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+          {mod.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === "status") {
+    return (
+      <label className="block"><span className={labelCls}>{field.label}</span>
+        <select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+          {ITEM_STATUS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (field.type === "number" || field.type === "currency") {
+    const isCur = field.type === "currency", isPct = /%/.test(field.label);
+    return (
+      <label className="block"><span className={labelCls}>{field.label.replace(/\s*\(%.*\)/, "")}</span>
+        <div className="relative">
+          {isCur && <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">R$</span>}
+          <input type="number" min="0" step={isCur ? "0.01" : "any"} value={value} onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+            className={cls + (isCur ? " pl-9" : "") + (isPct ? " pr-8" : "")} placeholder="0" />
+          {isPct && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">%</span>}
+        </div>
+      </label>
+    );
+  }
+  return (
+    <label className="block"><span className={labelCls}>{field.label}</span>
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className={cls} placeholder={field.label} />
+    </label>
+  );
+}
+
+function ContactRow({ icon: IconC, label, value }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 px-3.5 py-2.5">
+      <span className="shrink-0 text-slate-400"><IconC size={16} /></span>
+      <div className="min-w-0">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+        <div className={"truncate text-sm " + (value ? "text-ink" : "text-slate-300")}>{value || "não informado"}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- Client form ------------------------------ */
+function ClientForm({ mod, initial, onClose, onSave }) {
+  const [form, setForm] = useState(initial || { nome: "", telefone: "", email: "", empresa: "", status: "lead", obs: "" });
+  const [errors, setErrors] = useState({});
+  const nameRef = useRef(null);
+  useEffect(() => { nameRef.current && nameRef.current.focus(); }, []);
+
+  const set = (k, transform) => (e) => { const v = transform ? transform(e.target.value) : e.target.value; setForm((f) => ({ ...f, [k]: v })); if (errors[k]) setErrors((er) => ({ ...er, [k]: null })); };
+  const submit = () => {
+    const er = {};
+    if (!form.nome.trim()) er.nome = "Informe o nome do cliente.";
+    if (!isEmail(form.email)) er.email = "Digite um e-mail válido (ex.: nome@empresa.com).";
+    const digits = onlyDigits(form.telefone);
+    if (digits && digits.length < 10) er.telefone = "Telefone incompleto. Use DDD + número.";
+    if (Object.keys(er).length) { setErrors(er); return; }
+    onSave({ ...form, nome: form.nome.trim(), email: (form.email || "").trim(), empresa: (form.empresa || "").trim() });
+  };
+  const onKey = (e) => { if (e.key === "Enter" && !["TEXTAREA", "BUTTON"].includes(e.target.tagName)) { e.preventDefault(); submit(); } };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={initial ? "Editar cliente" : "Novo cliente"}>
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px] anim-fade" onClick={onClose} />
+      <div className="relative w-full max-w-xl rounded-t-3xl bg-white shadow-pop anim-pop sm:rounded-2xl" onKeyDown={onKey}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-ink">{initial ? "Editar cliente" : "Novo cliente"}</h2>
+            <p className="text-xs text-slate-500">Módulo {mod.nome}</p>
+          </div>
+          <IconBtn title="Fechar (Esc)" onClick={onClose}><I.X size={20} /></IconBtn>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Field label="Nome do contato" required error={errors.nome}>
+                <input ref={nameRef} className={inputCls + (errors.nome ? inputErrCls : "")} value={form.nome} onChange={set("nome")} placeholder="Ex.: Mariana Costa" autoComplete="off" />
+              </Field>
+            </div>
+            <div className="sm:col-span-2">
+              <Field label="Empresa"><input className={inputCls} value={form.empresa} onChange={set("empresa")} placeholder="Ex.: TechLog Soluções" autoComplete="off" /></Field>
+            </div>
+            <Field label="Telefone / WhatsApp" error={errors.telefone}>
+              <input className={inputCls + (errors.telefone ? inputErrCls : "")} value={form.telefone} onChange={set("telefone", maskPhone)} placeholder="(11) 99999-9999" inputMode="tel" autoComplete="off" />
+            </Field>
+            <Field label="E-mail" error={errors.email}>
+              <input className={inputCls + (errors.email ? inputErrCls : "")} value={form.email} onChange={set("email")} placeholder="nome@empresa.com" inputMode="email" autoComplete="off" />
+            </Field>
+            <div className="sm:col-span-2">
+              <span className="mb-1.5 block text-sm font-medium text-slate-700">Etapa no funil</span>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                {STATUSES.map((s) => {
+                  const active = form.status === s.key;
+                  return (
+                    <button type="button" key={s.key} onClick={() => setForm((f) => ({ ...f, status: s.key }))}
+                      className={"inline-flex items-center justify-center gap-1.5 rounded-xl border px-2 py-2 text-xs font-semibold transition " + (active ? "border-transparent shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")}
+                      style={active ? { background: s.soft, color: s.text, boxShadow: "inset 0 0 0 1px " + s.color + "55" } : undefined}>
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: s.color }} />{s.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <Field label="Observações" hint={"Os " + mod.itemLabelPlural.toLowerCase() + " são adicionados depois, dentro do card do cliente."}>
+                <textarea className={inputCls + " min-h-[96px] resize-y"} value={form.obs} onChange={set("obs")} placeholder="Contexto, histórico, próximos passos…" />
+              </Field>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 px-6 py-4">
+          <button type="button" onClick={onClose} className={btn.ghost}>Cancelar</button>
+          <button type="button" onClick={submit} className={btn.primary}>{initial ? "Salvar alterações" : "Cadastrar cliente"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* --------------------------- Module Manager ------------------------------- */
+const MODULE_COLORS = ["#3152E4", "#7C3AED", "#0E7490", "#047857", "#D97706", "#DC2626", "#BE185D", "#0D9488"];
+
+function Modal({ title, subtitle, icon: IconC, onClose, children, footer, width = "max-w-2xl" }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-ink/40 backdrop-blur-[2px] anim-fade" onClick={onClose} />
+      <div className={"relative flex max-h-[92vh] w-full flex-col rounded-t-3xl bg-white shadow-pop anim-pop sm:rounded-2xl " + width}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex items-center gap-3">
+            {IconC && <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand"><IconC size={18} /></span>}
+            <div><h2 className="text-lg font-bold text-ink">{title}</h2>{subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}</div>
+          </div>
+          <IconBtn title="Fechar (Esc)" onClick={onClose}><I.X size={20} /></IconBtn>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        {footer && <div className="flex items-center justify-end gap-2.5 border-t border-slate-100 px-6 py-4">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ModuleManager({ modules, onClose, onAdd, onDelete }) {
+  const [creating, setCreating] = useState(false);
+  return (
+    <Modal title={creating ? "Novo módulo de produto" : "Módulos de produto"} subtitle={creating ? "Defina o nome, a cor e os campos de cada item" : "Cada módulo tem sua própria carteira de clientes e campos"} icon={I.Grid} onClose={onClose}>
+      {!creating ? (
+        <>
+          <div className="space-y-2">
+            {modules.map((m) => {
+              const MIcon = I[m.icon] || I.Grid;
+              return (
+                <div key={m.id} className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl text-white" style={{ background: m.accent }}><MIcon size={18} /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-ink">{m.nome}</div>
+                    <div className="text-xs text-slate-500">{m.clients.length} cliente(s) · {m.fields.length} campo(s) por {m.itemLabel.toLowerCase()}{m.options.length ? " · " + m.options.length + " opções" : ""}</div>
+                  </div>
+                  {modules.length > 1 && <IconBtn title="Excluir módulo" onClick={() => onDelete(m.id)} danger><I.Trash size={18} /></IconBtn>}
+                </div>
+              );
+            })}
+          </div>
+          <button onClick={() => setCreating(true)}
+            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-brand/30 bg-brand-50/40 py-3 text-sm font-semibold text-brand transition hover:bg-brand-50">
+            <I.Plus size={18} /> Criar novo módulo de produto
+          </button>
+        </>
+      ) : (
+        <ModuleBuilder onCancel={() => setCreating(false)} onCreate={onAdd} existingIds={modules.map((m) => m.id)} />
+      )}
+    </Modal>
+  );
+}
+
+function ModuleBuilder({ onCancel, onCreate, existingIds }) {
+  const [nome, setNome] = useState("");
+  const [itemLabel, setItemLabel] = useState("Item");
+  const [accent, setAccent] = useState(MODULE_COLORS[2]);
+  const [icon, setIcon] = useState("Grid");
+  const [options, setOptions] = useState("");
+  const [fields, setFields] = useState([
+    { id: "tipo", label: "Tipo", type: "text", fromOptions: true },
+    { id: "status", label: "Status", type: "status" },
+    { id: "valor", label: "Valor", type: "currency" },
+  ]);
+  const [err, setErr] = useState("");
+
+  const addField = () => setFields((fs) => [...fs, { id: "campo" + (fs.length + 1), label: "", type: "text" }]);
+  const updateField = (i, patch) => setFields((fs) => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f));
+  const removeField = (i) => setFields((fs) => fs.filter((_, idx) => idx !== i));
+
+  const create = () => {
+    if (!nome.trim()) { setErr("Dê um nome ao módulo."); return; }
+    const validFields = fields.filter((f) => f.label.trim());
+    if (validFields.length === 0) { setErr("Adicione ao menos um campo."); return; }
+    let base = nome.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    let id = base || "modulo"; let n = 1;
+    while (existingIds.includes(id)) { id = base + "_" + (++n); }
+    const finalFields = validFields.map((f, i) => ({
+      id: (f.id && f.id !== "" ? f.id : "campo_" + i).toLowerCase().replace(/[^a-z0-9_]/g, "_"),
+      label: f.label.trim(), type: f.type, fromOptions: !!f.fromOptions && f.type === "text",
+    }));
+    const opts = options.split("\n").map((o) => o.trim()).filter(Boolean);
+    onCreate({ id, nome: nome.trim(), icon, accent, itemLabel: itemLabel.trim() || "Item", itemLabelPlural: (itemLabel.trim() || "Item") + "s", options: opts, fields: finalFields });
+  };
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Nome do módulo" required><input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Crédito, Seguros, Energia" /></Field>
+        <Field label="Como chamar cada item" hint="Ex.: Produto, Plano, Contrato"><input className={inputCls} value={itemLabel} onChange={(e) => setItemLabel(e.target.value)} /></Field>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <span className="mb-1.5 block text-sm font-medium text-slate-700">Cor</span>
+          <div className="flex flex-wrap gap-2">
+            {MODULE_COLORS.map((c) => (
+              <button key={c} type="button" onClick={() => setAccent(c)} aria-label={"Cor " + c}
+                className={"h-8 w-8 rounded-lg transition " + (accent === c ? "ring-2 ring-offset-2 ring-ink" : "hover:scale-105")} style={{ background: c }} />
+            ))}
+          </div>
+        </div>
+        <div>
+          <span className="mb-1.5 block text-sm font-medium text-slate-700">Ícone</span>
+          <div className="flex flex-wrap gap-2">
+            {ICON_CHOICES.map((k) => { const Ic = I[k]; return (
+              <button key={k} type="button" onClick={() => setIcon(k)} aria-label={"Ícone " + k}
+                className={"flex h-8 w-8 items-center justify-center rounded-lg border transition " + (icon === k ? "border-transparent text-white" : "border-slate-200 bg-white text-slate-500 hover:border-slate-300")}
+                style={icon === k ? { background: accent } : undefined}><Ic size={16} /></button>
+            ); })}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <Field label="Opções pré-definidas (uma por linha, opcional)" hint='Usadas no campo marcado como "lista".'>
+          <textarea className={inputCls + " min-h-[72px] resize-y"} value={options} onChange={(e) => setOptions(e.target.value)} placeholder={"Empréstimo pessoal\nCapital de giro\nFinanciamento"} />
+        </Field>
+      </div>
+
+      <div className="mt-5">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-semibold text-slate-700">Campos por {(itemLabel || "item").toLowerCase()}</span>
+          <button type="button" onClick={addField} className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"><I.Plus size={14} /> Adicionar campo</button>
+        </div>
+        <div className="space-y-2">
+          {fields.map((f, i) => (
+            <div key={i} className="grid grid-cols-12 items-center gap-2 rounded-xl bg-slate-50 p-2">
+              <input className={inputCls + " col-span-5 py-2 text-xs"} value={f.label} onChange={(e) => updateField(i, { label: e.target.value })} placeholder="Nome do campo" />
+              <select className={inputCls + " col-span-4 py-2 text-xs"} value={f.type} onChange={(e) => updateField(i, { type: e.target.value })}>
+                {FIELD_TYPES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+              <label className="col-span-2 flex items-center gap-1 text-[11px] text-slate-600" title="Preencher a partir da lista de opções">
+                <input type="checkbox" checked={!!f.fromOptions} disabled={f.type !== "text"} onChange={(e) => updateField(i, { fromOptions: e.target.checked })} /> lista
+              </label>
+              <button type="button" onClick={() => removeField(i)} className="col-span-1 flex justify-center text-slate-300 hover:text-red-500" aria-label="Remover campo"><I.X size={15} /></button>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1.5 text-xs text-slate-400">Tipos: texto, número, valor (R$, soma no funil e no painel) e status (interesse/contratado). Marque "lista" para um campo de texto puxar das opções acima.</p>
+      </div>
+
+      {err && <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-red-600"><I.Alert size={15} /> {err}</p>}
+      <div className="mt-5 flex justify-end gap-2.5">
+        <button type="button" onClick={onCancel} className={btn.ghost}><I.ChevL size={16} /> Voltar</button>
+        <button type="button" onClick={create} className={btn.primary}>Criar módulo</button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------- Configurações e backup -------------------------- */
+function SettingsModal({ modules, mod, savedAt, onClose, onReset, onImport, notify }) {
+  const fileRef = useRef(null);
+  const totalClients = modules.reduce((s, m) => s + m.clients.length, 0);
+  const stamp = todayISO();
+
+  const exportJSON = () => {
+    downloadFile("prospera-crm-backup-" + stamp + ".json", JSON.stringify(modules, null, 2), "application/json");
+    notify({ title: "Backup exportado", message: "Guarde o arquivo em um lugar seguro." });
+  };
+  const exportCSV = () => {
+    const cur = mod.fields.find((f) => f.type === "currency");
+    const head = ["Nome", "Empresa", "Telefone", "E-mail", "Etapa", mod.itemLabelPlural, "Qtd. itens", "Valor total", "Observações", "Cadastrado em", "Atualizado em"];
+    const rows = mod.clients.map((c) => [
+      c.nome, c.empresa, c.telefone, c.email, statusMeta(c.status).label,
+      c.items.map((it) => itemTitle(mod, it) + (cur ? " (" + BRL(itemValue(mod, it)) + ")" : "")).join(" | "),
+      c.items.length, clientValue(mod, c).toFixed(2).replace(".", ","), c.obs, fmtDateTime(c.createdAt), fmtDateTime(c.updatedAt),
+    ]);
+    const csv = "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+    downloadFile("prospera-crm-" + mod.id + "-" + stamp + ".csv", csv, "text/csv;charset=utf-8");
+    notify({ title: "Planilha exportada", message: mod.clients.length + " cliente(s) de " + mod.nome });
+  };
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((m) => m && m.id && m.nome)) throw new Error("formato");
+        onImport(parsed);
+      } catch (err) {
+        notify({ title: "Arquivo inválido", message: "Escolha um backup .json gerado por este CRM.", kind: "error" });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const Row = ({ icon: IconC, title, text, children, tone }) => (
+    <div className={"flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center " + (tone === "danger" ? "border-red-100 bg-red-50/40" : "border-slate-200")}>
+      <span className={"flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " + (tone === "danger" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500")}><IconC size={18} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-ink">{title}</div>
+        <div className="text-xs leading-relaxed text-slate-500">{text}</div>
+      </div>
+      <div className="flex shrink-0 gap-2">{children}</div>
+    </div>
+  );
+
+  return (
+    <Modal title="Configurações e backup" subtitle="Onde os dados ficam e como protegê-los" icon={I.Cog} onClose={onClose}>
+      <div className="mb-5 flex items-start gap-3 rounded-xl border border-brand-100 bg-brand-50/60 p-4 text-sm text-slate-700">
+        <span className="mt-0.5 shrink-0 text-brand"><I.Info size={18} /></span>
+        <div>
+          <b className="text-ink">Os dados ficam somente neste navegador.</b> Hoje são {modules.length} módulo(s) e {totalClients} cliente(s).
+          Nada é enviado para servidores, então limpar o histórico do navegador apaga tudo. Exporte um backup de vez em quando.
+          {savedAt && <span className="mt-1 block text-xs text-slate-500">Último salvamento automático: {fmtDateTime(new Date(savedAt).toISOString())}</span>}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <Row icon={I.Download} title="Exportar backup completo" text="Gera um arquivo .json com todos os módulos e clientes. Serve para restaurar em outro computador.">
+          <button onClick={exportJSON} className={btn.primary}><I.Download size={16} /> Exportar</button>
+        </Row>
+        <Row icon={I.Upload} title="Importar backup" text="Substitui os dados atuais pelos do arquivo .json escolhido.">
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onFile} />
+          <button onClick={() => fileRef.current && fileRef.current.click()} className={btn.secondary}><I.Upload size={16} /> Escolher arquivo</button>
+        </Row>
+        <Row icon={I.Table} title={"Exportar planilha de " + mod.nome} text="Arquivo .csv com os clientes do módulo atual, pronto para abrir no Excel.">
+          <button onClick={exportCSV} className={btn.secondary}><I.Table size={16} /> Exportar CSV</button>
+        </Row>
+        <Row icon={I.Reset} title="Restaurar dados de exemplo" text="Apaga tudo o que foi salvo e volta aos dados iniciais de demonstração." tone="danger">
+          <button onClick={onReset} className={btn.dangerSoft}><I.Reset size={16} /> Restaurar</button>
+        </Row>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-slate-200 p-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink"><I.Keyboard size={16} className="text-slate-400" /> Atalhos</div>
+        <ul className="grid grid-cols-1 gap-1.5 text-xs text-slate-600 sm:grid-cols-2">
+          <li className="flex items-center gap-2"><Kbd>/</Kbd> Ir para a busca</li>
+          <li className="flex items-center gap-2"><Kbd>Esc</Kbd> Fechar painel ou janela</li>
+          <li className="flex items-center gap-2"><Kbd>Enter</Kbd> Salvar formulário</li>
+          <li className="flex items-center gap-2">Arrastar card no funil muda a etapa</li>
+        </ul>
+      </div>
+    </Modal>
+  );
+}
+
+/* --------------------------- Confirmação e toasts -------------------------- */
+function ConfirmDialog({ title, message, confirmLabel = "Confirmar", danger, onCancel, onConfirm }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current && ref.current.focus(); }, []);
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-ink/50 backdrop-blur-[2px] anim-fade" onClick={onCancel} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-pop anim-pop">
+        <div className="flex items-start gap-4">
+          <span className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-xl " + (danger ? "bg-red-100 text-red-600" : "bg-brand-50 text-brand")}><I.Alert size={22} /></span>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-ink">{title}</h2>
+            {message && <p className="mt-1 text-sm leading-relaxed text-slate-600">{message}</p>}
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2.5">
+          <button ref={ref} type="button" onClick={onCancel} className={btn.secondary}>Cancelar</button>
+          <button type="button" onClick={onConfirm} className={danger ? btn.danger : btn.primary}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Toasts({ toasts, onDismiss }) {
+  if (!toasts.length) return null;
+  const tone = { success: "text-emerald-600", info: "text-brand", error: "text-red-600" };
+  const IconFor = { success: I.Check, info: I.Info, error: I.Alert };
+  return (
+    <div className="pointer-events-none fixed bottom-4 right-4 z-[70] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2" aria-live="polite">
+      {toasts.map((t) => { const Ic = IconFor[t.kind] || I.Check; return (
+        <div key={t.id} className="pointer-events-auto flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-pop anim-toast">
+          <span className={"mt-0.5 shrink-0 " + (tone[t.kind] || tone.success)}><Ic size={18} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-ink">{t.title}</div>
+            {t.message && <div className="truncate text-xs text-slate-500">{t.message}</div>}
+          </div>
+          {t.action && <button onClick={() => { t.action.onClick(); onDismiss(t.id); }} className="shrink-0 rounded-lg px-2 py-1 text-xs font-bold text-brand hover:bg-brand-50">{t.action.label}</button>}
+          <button onClick={() => onDismiss(t.id)} className="shrink-0 text-slate-300 hover:text-slate-600" aria-label="Fechar aviso"><I.X size={15} /></button>
+        </div>
+      ); })}
+    </div>
+  );
+}
+
+/* --------------------------------- mount ---------------------------------- */
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<ProsperaCRM />);
+  var boot = document.getElementById("boot");
+  if (boot) boot.remove();
+} catch (err) {
+  if (window.__crmError) window.__crmError(err && err.message ? err.message : String(err));
+  throw err;
+}
+</script>
+</body>
+</html>

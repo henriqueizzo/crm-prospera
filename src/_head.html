@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Próspera CRM</title>
+<meta name="description" content="CRM multi-produto da Próspera Benefícios" />
+<meta name="theme-color" content="#3152E4" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='11' fill='%233152E4'/%3E%3Cpath d='M15 17c-5 0-8 3-8 7s3 7 8 7c4 0 6-3 9-7 3-4 5-7 9-7 5 0 8 3 8 7s-3 7-8 7c-4 0-6-3-9-7' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://unpkg.com" crossorigin />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js" crossorigin></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  /* Identidade visual da Próspera (mesma do site prosperabeneficios.com): azul #3152E4, tinta #1A1A2E, fundo #F7F9FA, fonte Inter. */
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: { DEFAULT: "#3152E4", dark: "#2541B8", 50: "#EFF4FF", 100: "#DBEAFE", 200: "#BFDBFE", 300: "#93B4FD", 700: "#1E3A9F" },
+          ink: "#1A1A2E",
+          canvas: "#F7F9FA",
+          /* Estados usados por badges de prazo (SLA) e prioridade */
+          ok: { DEFAULT: "#64748B", soft: "#F1F5F9" },
+          warn: { DEFAULT: "#D97706", soft: "#FEF3C7" },
+          late: { DEFAULT: "#DC2626", soft: "#FEE2E2" },
+        },
+        fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"] },
+        boxShadow: {
+          card: "0 1px 2px rgba(26,26,46,.04), 0 1px 3px rgba(26,26,46,.06)",
+          pop: "0 18px 40px -18px rgba(26,26,46,.28), 0 2px 6px rgba(26,26,46,.06)",
+          ring: "0 0 0 4px rgba(49,82,228,.12)",
+        },
+      },
+    },
+  };
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root { --blue: #3152E4; --blue-dark: #2541B8; --ink: #1A1A2E; --canvas: #F7F9FA; color-scheme: light; }
+  html, body, #root { height: 100%; }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; margin: 0; background: var(--canvas); color: var(--ink); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  ::selection { background: rgba(49,82,228,.18); color: var(--ink); }
+
+  /* Barras de rolagem: padrão (10px) e fina (.scroll-thin, 6px) para listas e colunas do funil */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: padding-box; border: 2px solid transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  .scroll-thin { scrollbar-width: thin; scrollbar-color: #cbd5e1 transparent; }
+  .scroll-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border: 0; border-radius: 6px; background-clip: border-box; }
+  .scroll-thin::-webkit-scrollbar-thumb:hover { background: #94a3b8; border: 0; }
+
+  :where(button, a, [tabindex]):focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  :where(button, a):not(:disabled) { transition: color .15s, background-color .15s, border-color .15s, box-shadow .15s, opacity .15s, transform .15s; transition-timing-function: cubic-bezier(.2,.8,.2,1); }
+  input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  input[type=date]::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* Cartão que "levanta" ao passar o mouse (cards do funil, listas clicáveis) */
+  .card-hover { transition: transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease, border-color .18s ease; }
+  .card-hover:hover { transform: translateY(-1px); box-shadow: 0 18px 40px -18px rgba(26,26,46,.28), 0 2px 6px rgba(26,26,46,.06); border-color: rgba(49,82,228,.4); }
+
+  /* Esqueleto de carregamento (shimmer), para uso futuro: <div class="skeleton h-4 w-32"></div> */
+  .skeleton { position: relative; overflow: hidden; background: #e9edf2; border-radius: 8px; color: transparent !important; }
+  .skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent); animation: shimmer 1.4s infinite; }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slideRight { from { transform: translateX(28px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes slideLeft { from { transform: translateX(-28px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes slideUp { from { transform: translateY(40px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes popIn { from { transform: translateY(10px) scale(.985); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes toastIn { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes toastBar { from { width: 100% } to { width: 0 } }
+  .anim-fade { animation: fadeIn .18s ease-out both; }
+  .anim-slide-right { animation: slideRight .24s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-slide-left { animation: slideLeft .24s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-slide-up { animation: slideUp .26s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-pop { animation: popIn .2s cubic-bezier(.2,.8,.2,1) both; }
+  .anim-toast { animation: toastIn .22s cubic-bezier(.2,.8,.2,1) both; }
+  /* Modais: no celular sobem de baixo (folha); no desktop "pulam" centralizados */
+  .anim-sheet { animation: slideUp .26s cubic-bezier(.2,.8,.2,1) both; }
+  @media (min-width: 640px) { .anim-sheet { animation: popIn .2s cubic-bezier(.2,.8,.2,1) both; } }
+  .toast-bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 100%; border-bottom-left-radius: 12px; background: currentColor; opacity: .35; animation: toastBar linear forwards; }
+  .toast:hover .toast-bar { animation-play-state: paused; }
+  @media (prefers-reduced-motion: reduce) {
+    .anim-fade, .anim-slide-right, .anim-slide-left, .anim-slide-up, .anim-sheet, .anim-pop, .anim-toast, .toast-bar, .skeleton::after { animation: none; }
+    * { transition: none !important; }
+  }
+
+  /* Impressão: esconde o que não faz sentido no papel (use class="no-print") */
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff; }
+  }
+
+  /* Tela de carregamento, com a marca */
+  #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #475569; background: var(--canvas); font-family: 'Inter', system-ui, sans-serif; z-index: 100; }
+  #boot .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  #boot .brand b { font-size: 26px; font-weight: 800; letter-spacing: -.02em; color: var(--ink); text-transform: lowercase; }
+  #boot .brand span { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--blue); background: #EFF4FF; border-radius: 6px; padding: 3px 6px; }
+  #boot .ring { width: 34px; height: 34px; border: 4px solid #e2e8f0; border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+  #boot .msg { font-size: 13px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #boot.err { color: #b91c1c; padding: 24px; text-align: center; }
+  #boot.err .ring, #boot.err .brand { display: none; }
+  #boot code { display: block; margin-top: 8px; max-width: 90vw; overflow: auto; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #7f1d1d; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot"><div class="brand"><b>próspera</b><span>CRM</span></div><div class="ring"></div><div class="msg">Carregando o CRM…</div></div>
+
+<script>
+/* Tela de carregamento + captura de erros: garante que nunca fique "branco mudo". */
+(function () {
+  function showError(msg) {
+    var b = document.getElementById("boot");
+    if (!b) return;
+    b.className = "err";
+    b.innerHTML = '<div style="font-weight:700;font-size:16px">Não foi possível carregar o CRM</div>' +
+      '<div style="font-size:13px;max-width:520px">Isso costuma ser uma biblioteca externa bloqueada (rede, extensão ou firewall). Tente outro navegador ou uma aba anônima sem extensões.</div>' +
+      '<code>' + String(msg).replace(/[<>&]/g, function (c) { return ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]); }) + '</code>';
+  }
+  window.__crmError = showError;
+  window.addEventListener("error", function (e) {
+    if (e && e.message) showError(e.message + (e.filename ? "  ("+e.filename+")" : ""));
+  });
+  setTimeout(function () {
+    var root = document.getElementById("root");
+    if (root && root.childElementCount === 0) {
+      if (!window.React) return showError("React não carregou (CDN unpkg.com bloqueado?).");
+      if (!window.Babel) return showError("Babel não carregou (CDN unpkg.com bloqueado?).");
+      showError("O aplicativo não renderizou. Abra o Console (F12) para ver o detalhe.");
+    }
+  }, 12000);
+})();
+</script>
+
