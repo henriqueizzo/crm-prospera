@@ -15,3 +15,7 @@ npm-debug.log*
 
 # Backups locais
 *.bak
+
+# Ferramentas de teste do Claude (copiadas temporariamente para a pasta)
+__probe.html
+__seed-*.json

@@ -260,18 +260,28 @@ function saveModules(modules) {
 function clearSavedModules() { try { window.localStorage.removeItem(STORAGE_KEY); } catch (e) {} }
 
 /* ------------------------------- BACKUP ----------------------------------- */
-function serializeBackup(modules, settings) {
-  return JSON.stringify({ app: "prospera-crm", version: 4, exportedAt: nowISO(), modules, settings }, null, 2);
+/* v5: o backup leva também os usuários (com o hash das senhas) e o registro de atividades, quando informados em `extra`. */
+function serializeBackup(modules, settings, extra) {
+  const ex = extra && typeof extra === "object" ? extra : {};
+  const payload = { app: "prospera-crm", version: 5, exportedAt: nowISO(), modules, settings };
+  if (Array.isArray(ex.users)) payload.users = ex.users;
+  if (Array.isArray(ex.activity)) payload.activity = ex.activity;
+  return JSON.stringify(payload, null, 2);
 }
-/* Aceita o backup antigo (array de módulos, v2) e o novo (objeto com modules + settings, v3). */
+/* Aceita o backup antigo (array de módulos, v2), o v3/v4 (modules + settings) e o v5 (+ users + activity). */
 function parseBackup(parsed) {
   const validMods = (arr) => Array.isArray(arr) && arr.length > 0 && arr.every((m) => m && typeof m === "object" && m.id && m.nome);
   if (Array.isArray(parsed)) {
     if (!validMods(parsed)) throw new Error("formato");
-    return { modules: parsed.map(hydrateModule), settings: null };
+    return { modules: parsed.map(hydrateModule), settings: null, users: null, activity: null };
   }
   if (parsed && typeof parsed === "object" && validMods(parsed.modules)) {
-    return { modules: parsed.modules.map(hydrateModule), settings: parsed.settings && typeof parsed.settings === "object" ? hydrateSettings(parsed.settings) : null };
+    return {
+      modules: parsed.modules.map(hydrateModule),
+      settings: parsed.settings && typeof parsed.settings === "object" ? hydrateSettings(parsed.settings) : null,
+      users: Array.isArray(parsed.users) ? hydrateUsers(parsed.users) : null,
+      activity: Array.isArray(parsed.activity) ? hydrateActivity(parsed.activity) : null,
+    };
   }
   throw new Error("formato");
 }
@@ -449,4 +459,89 @@ function stageDurations(c) {
     const days = isNaN(ms) ? 0 : Math.max(0, Math.round((ms / 864e5) * 10) / 10);
     return { status: e.status, from, to, days };
   });
+}
+
+/* ============================ USUÁRIOS E ACESSO (v5) ======================
+   Usuários (com hash da senha), sessão (quem está logado neste navegador) e
+   registro de atividades ficam em chaves próprias. Nada disso sai do navegador.
+============================================================================ */
+const USERS_KEY = "prospera_crm_users_v5";
+const SESSION_KEY = "prospera_crm_session_v5";
+const ACTIVITY_KEY = "prospera_crm_activity_v5";
+
+/* Garante que um usuário salvo (ou parcial) tenha todos os campos válidos. */
+function hydrateUser(u) {
+  const src = u && typeof u === "object" ? u : {};
+  const perfil = src.perfil === "admin" ? "admin" : "usuario";
+  const srcAbas = src.abas && typeof src.abas === "object" ? src.abas : null;
+  const abas = {};
+  PERM_TABS.forEach((t) => { abas[t.key] = srcAbas ? !!srcAbas[t.key] : !!PERM_DEFAULT_USER[t.key]; });
+  return {
+    id: storageStr(src.id) || uid(),
+    nome: storageStr(src.nome).trim(),
+    login: authNormalizeLogin(src.login),
+    senhaHash: storageStr(src.senhaHash),
+    salt: storageStr(src.salt),
+    perfil,
+    ativo: src.ativo !== false,
+    vendedorId: storageStr(src.vendedorId),
+    abas,
+    criadoEm: storageStr(src.criadoEm) || nowISO(),
+    ultimoAcesso: storageStr(src.ultimoAcesso),
+    trocarSenha: !!src.trocarSenha,
+  };
+}
+/* Lista limpa: sem login vazio e sem login repetido (fica o primeiro). */
+function hydrateUsers(list) {
+  const seen = new Set();
+  return storageList(list, []).map(hydrateUser).filter((u) => {
+    if (!u.login || seen.has(u.login)) return false;
+    seen.add(u.login);
+    return true;
+  });
+}
+function loadUsers() {
+  let raw = null;
+  try { raw = window.localStorage.getItem(USERS_KEY); } catch (e) { console.warn("Sem acesso ao localStorage; sem usuários salvos.", e); return []; }
+  if (!raw) return [];
+  try { return hydrateUsers(JSON.parse(raw)); }
+  catch (e) { storageKeepCorrupted("users", USERS_KEY, raw, e); return []; }
+}
+function saveUsers(users) {
+  try { window.localStorage.setItem(USERS_KEY, JSON.stringify(users)); return true; }
+  catch (e) { console.warn("Não foi possível salvar os usuários.", e); return false; }
+}
+/* Sessão: { userId, at } ou null. */
+function loadSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return p && typeof p === "object" && p.userId ? { userId: String(p.userId), at: storageStr(p.at) } : null;
+  } catch (e) { return null; }
+}
+function saveSession(s) {
+  try {
+    if (!s) window.localStorage.removeItem(SESSION_KEY);
+    else window.localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+function hydrateActivity(list) {
+  return storageList(list, []).filter((e) => e.at && e.texto).map((e) => ({
+    id: storageStr(e.id) || uid(), at: storageStr(e.at), userId: storageStr(e.userId), userNome: storageStr(e.userNome),
+    tipo: activityTypeMeta(e.tipo).key, texto: storageStr(e.texto).slice(0, 240),
+    modId: storageStr(e.modId), clientId: storageStr(e.clientId), clientNome: storageStr(e.clientNome),
+  })).slice(0, ACTIVITY_MAX);
+}
+function loadActivity() {
+  let raw = null;
+  try { raw = window.localStorage.getItem(ACTIVITY_KEY); } catch (e) { return []; }
+  if (!raw) return [];
+  try { return hydrateActivity(JSON.parse(raw)); }
+  catch (e) { storageKeepCorrupted("activity", ACTIVITY_KEY, raw, e); return []; }
+}
+function saveActivity(list) {
+  try { window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(list)); return true; }
+  catch (e) { console.warn("Não foi possível salvar o registro de atividades.", e); return false; }
 }

@@ -20,7 +20,9 @@ function sidebarDaysSince(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / 864e5));
 }
 
-function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, savedAt, className = "", onClose, settings, saveError }) {
+function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, savedAt, className = "", onClose, settings, saveError, user, can, onLogout, onAccount, usersCount }) {
+  /* v5: cada item só aparece se a aba estiver liberada para o usuário logado (administrador vê tudo). */
+  const ok = (k) => (can ? can(k) : true);
   /* Contadores de TODOS os módulos, respeitando o chip "Só meus" (settings.ui.soMeus). */
   const mine = (c) => (settings ? matchesSoMeus(settings, c) : true);
   const everyone = modules.reduce((acc, m) => acc.concat((m.clients || []).filter(mine)), []);
@@ -58,22 +60,35 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
             );
           })}
         </div>
-        <button type="button" onClick={onManage} className="mt-1.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-brand transition hover:bg-brand-50">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-brand/40"><I.Plus size={15} /></span>
-          Gerenciar módulos
-        </button>
+        {ok("modulos") && (
+          <button type="button" onClick={onManage} className="mt-1.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-brand transition hover:bg-brand-50">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-brand/40"><I.Plus size={15} /></span>
+            Gerenciar módulos
+          </button>
+        )}
 
         <div className="mt-6">
           <SectionLabel>Navegação</SectionLabel>
           <div className="space-y-0.5">
-            <SidebarNavItem id="dashboard" icon={I.Dash} active={view === "dashboard"} onSelect={onView}>Painel</SidebarNavItem>
-            <SidebarNavItem id="agenda" icon={I.ListChecks || I.Calendar} active={view === "agenda"} onSelect={onView}
-              badge={overdueAll > 0 ? overdueAll : null} badgeTone="late">Agenda</SidebarNavItem>
-            <SidebarNavItem id="clientes" icon={I.List} active={view === "clientes"} onSelect={onView} badge={mod.clients.length}>Clientes</SidebarNavItem>
-            <SidebarNavItem id="funil" icon={I.Kanban} active={view === "funil"} onSelect={onView}>Funil de vendas</SidebarNavItem>
-            <SidebarNavItem id="relatorios" icon={I.BarChart} active={view === "relatorios"} onSelect={onView}>Relatórios</SidebarNavItem>
+            {ok("dashboard") && <SidebarNavItem id="dashboard" icon={I.Dash} active={view === "dashboard"} onSelect={onView}>Painel</SidebarNavItem>}
+            {ok("agenda") && <SidebarNavItem id="agenda" icon={I.ListChecks || I.Calendar} active={view === "agenda"} onSelect={onView}
+              badge={overdueAll > 0 ? overdueAll : null} badgeTone="late">Agenda</SidebarNavItem>}
+            {ok("clientes") && <SidebarNavItem id="clientes" icon={I.List} active={view === "clientes"} onSelect={onView} badge={mod.clients.length}>Clientes</SidebarNavItem>}
+            {ok("funil") && <SidebarNavItem id="funil" icon={I.Kanban} active={view === "funil"} onSelect={onView}>Funil de vendas</SidebarNavItem>}
+            {ok("relatorios") && <SidebarNavItem id="relatorios" icon={I.BarChart} active={view === "relatorios"} onSelect={onView}>Relatórios</SidebarNavItem>}
+            {!MAIN_VIEWS.some(ok) && <p className="px-3 py-2 text-xs text-slate-400">Nenhuma aba liberada para você.</p>}
           </div>
         </div>
+
+        {isAdmin(user) && (
+          <div className="mt-6">
+            <SectionLabel>Administração</SectionLabel>
+            <div className="space-y-0.5">
+              <SidebarNavItem id="usuarios" icon={I.Shield} active={view === "usuarios"} onSelect={onView} badge={usersCount != null ? usersCount : null}>Usuários</SidebarNavItem>
+              <SidebarNavItem id="atividades" icon={I.History} active={view === "atividades"} onSelect={onView}>Atividades</SidebarNavItem>
+            </div>
+          </div>
+        )}
 
         {(overdueAll > 0 || stuck > 0) && (
           <div className="mt-6 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-xs text-red-800">
@@ -106,7 +121,7 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
           </div>
         )}
 
-        {backupDue && (
+        {backupDue && ok("configuracoes") && (
           <button type="button" onClick={() => onSettings("backup")} title="Exportar um backup dos seus dados"
             className="mt-3 flex w-full items-center gap-2.5 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-left text-xs text-amber-800 transition hover:bg-amber-100/70">
             <I.Download size={15} className="shrink-0 text-amber-600" />
@@ -120,28 +135,24 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
       </div>
 
       <div className="border-t border-slate-100 px-3 py-3">
-        <button type="button" onClick={() => onSettings("equipe")} title="Quem está usando o CRM agora (define o responsável padrão e o autor das notas)"
-          className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-100">
-          {meName
-            ? <>
-                <Avatar name={meName} size={30} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">Você</span>
-                  <span className="block truncate text-sm font-semibold text-ink">{meName}</span>
-                </span>
-              </>
-            : <>
-                <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 text-slate-400"><I.User size={15} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">Você</span>
-                  <span className="block truncate text-sm font-medium text-brand">Definir quem sou eu</span>
-                </span>
-              </>}
-          <I.ChevR size={16} className="text-slate-300" />
-        </button>
-        <button type="button" onClick={() => onSettings()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink">
-          <I.Cog size={18} className="text-slate-400" /> Configurações e backup
-        </button>
+        {/* v5: quem está logado (clique = trocar senha) e o botão Sair. */}
+        <div className="mb-1 flex items-center gap-1">
+          <button type="button" onClick={onAccount} title="Minha conta · trocar senha"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-100">
+            <Avatar name={user ? user.nome : (meName || "?")} size={30} />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">{user ? perfilLabel(user.perfil) : "Você"}</span>
+              <span className="block truncate text-sm font-semibold text-ink">{user ? user.nome : meName || "—"}</span>
+              {user && meName && meName !== user.nome && <span className="block truncate text-[11px] text-slate-400">vendedor: {meName}</span>}
+            </span>
+          </button>
+          <IconBtn title="Sair do CRM" onClick={onLogout}><I.LogOut size={18} /></IconBtn>
+        </div>
+        {ok("configuracoes") && (
+          <button type="button" onClick={() => onSettings()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink">
+            <I.Cog size={18} className="text-slate-400" /> Configurações e backup
+          </button>
+        )}
         {saveError
           ? <button type="button" onClick={() => onSettings("backup")} title="O navegador recusou gravar os dados. Exporte um backup para não perder nada."
               className="mt-1 flex w-full items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-left text-[11px] text-red-700 transition hover:bg-red-100/70">

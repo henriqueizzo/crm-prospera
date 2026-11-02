@@ -95,7 +95,7 @@ function downloadFile(name, content, type) {
 /* Célula de CSV: protege contra fórmulas (= + - @ no início viram texto) e escapa aspas/quebras de linha. */
 const csvCell = (v) => { let s = String(v ?? ""); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 const isTyping = (el) => !!el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
-const VIEW_HASH = { painel: "dashboard", dashboard: "dashboard", clientes: "clientes", funil: "funil", relatorios: "relatorios", agenda: "agenda" };
+const VIEW_HASH = { painel: "dashboard", dashboard: "dashboard", clientes: "clientes", funil: "funil", relatorios: "relatorios", agenda: "agenda", usuarios: "usuarios", atividades: "atividades" };
 
 /* ----------------------------- constantes v3 ------------------------------ */
 /* Porte da empresa e interesse do cliente (entram na pontuação de prioridade). */
@@ -373,5 +373,208 @@ function clientsToCSV(mod, settings, clients) {
       (c.items || []).length, dealValue(mod, c).toFixed(2).replace(".", ","), c.obs, fmtDateTime(c.createdAt), fmtDateTime(c.updatedAt),
     ];
   });
+  return "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+}
+
+/* ============================== NOVIDADES v5 ==============================
+   Usuários com senha, perfis (administrador / usuário), abas visíveis por
+   usuário e registro de atividades. Aqui ficam só helpers puros (sem React e
+   sem localStorage); a persistência está em 04-storage.js.
+============================================================================ */
+
+/* ------------------------------ perfis / abas ----------------------------- */
+const USER_PERFIS = [
+  { key: "admin",   label: "Administrador", hint: "Vê tudo, gerencia usuários e acompanha as atividades." },
+  { key: "usuario", label: "Usuário",       hint: "Vê só as abas liberadas pelo administrador." },
+];
+function perfilLabel(key) { const p = USER_PERFIS.find((x) => x.key === key); return p ? p.label : "Usuário"; }
+/* Abas/áreas que um administrador pode liberar ou esconder para cada usuário. */
+const PERM_TABS = [
+  { key: "dashboard",     label: "Painel",                 icon: "Dash",       hint: "Indicadores, tarefas do dia e metas" },
+  { key: "agenda",        label: "Agenda",                 icon: "ListChecks", hint: "Tarefas de todos os módulos" },
+  { key: "clientes",      label: "Clientes",               icon: "List",       hint: "Lista e ficha dos clientes" },
+  { key: "funil",         label: "Funil de vendas",        icon: "Kanban",     hint: "Kanban por etapa" },
+  { key: "relatorios",    label: "Relatórios",             icon: "BarChart",   hint: "Conversão, tempos e desempenho" },
+  { key: "configuracoes", label: "Configurações e backup", icon: "Cog",        hint: "Equipe, funil, automações, mensagens, backup e planilhas" },
+  { key: "modulos",       label: "Gerenciar módulos",      icon: "Layers",     hint: "Criar e excluir módulos de produto" },
+];
+const PERM_DEFAULT_USER = { dashboard: true, agenda: true, clientes: true, funil: true, relatorios: true, configuracoes: false, modulos: false };
+/* Áreas só de administrador (nunca aparecem na lista de abas liberáveis). */
+const ADMIN_VIEWS = ["usuarios", "atividades"];
+const MAIN_VIEWS = ["dashboard", "agenda", "clientes", "funil", "relatorios"];
+function permDefaults(all) { const o = {}; PERM_TABS.forEach((t) => { o[t.key] = all ? true : !!PERM_DEFAULT_USER[t.key]; }); return o; }
+function permTabLabel(key) { const t = PERM_TABS.find((x) => x.key === key); return t ? t.label : key; }
+function isAdmin(user) { return !!user && user.perfil === "admin"; }
+/* O usuário pode ver esta aba/área? Administrador vê tudo; "usuarios" e "atividades" são só de administrador. */
+function userCan(user, key) {
+  if (!user) return false;
+  if (isAdmin(user)) return true;
+  if (ADMIN_VIEWS.includes(key)) return false;
+  return !!(user.abas && user.abas[key]);
+}
+function userAllowedViews(user) { return MAIN_VIEWS.concat(ADMIN_VIEWS).filter((v) => userCan(user, v)); }
+function firstAllowedView(user) { const v = userAllowedViews(user); return v.length ? v[0] : null; }
+/* Resumo das abas liberadas, para listas: ["Painel", "Agenda", ...]. */
+function userTabLabels(user) {
+  if (!user) return [];
+  if (isAdmin(user)) return PERM_TABS.map((t) => t.label);
+  return PERM_TABS.filter((t) => user.abas && user.abas[t.key]).map((t) => t.label);
+}
+
+/* --------------------------------- senha ---------------------------------- */
+const authNormalizeLogin = (s) => String(s || "").trim().toLowerCase();
+function authValidatePassword(p) {
+  const s = String(p || "");
+  if (s.length < 6) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (s.length > 72) return "A senha é longa demais (máximo 72 caracteres).";
+  return "";
+}
+/* Texto → bytes UTF-8 (sem TextEncoder, para rodar também nos testes em Node). */
+function authUtf8Bytes(str) {
+  const out = [];
+  for (const ch of String(str)) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+    else if (cp < 0x10000) out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    else out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+  }
+  return out;
+}
+/* SHA-256 em JavaScript puro (sem bibliotecas). Devolve 64 caracteres hexadecimais. */
+const AUTH_SHA_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+function authSha256Hex(message) {
+  const bytes = authUtf8Bytes(message);
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const hi = Math.floor(bitLen / 0x100000000), lo = bitLen >>> 0;
+  bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255, (lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+  let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const W = new Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let i = 0; i < 16; i++) W[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(W[i - 15], 7) ^ rotr(W[i - 15], 18) ^ (W[i - 15] >>> 3);
+      const s1 = rotr(W[i - 2], 17) ^ rotr(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + AUTH_SHA_K[i] + W[i]) | 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H = [(H[0] + a) | 0, (H[1] + b) | 0, (H[2] + c) | 0, (H[3] + d) | 0, (H[4] + e) | 0, (H[5] + f) | 0, (H[6] + g) | 0, (H[7] + h) | 0];
+  }
+  return H.map((x) => (x >>> 0).toString(16).padStart(8, "0")).join("");
+}
+/* Sal aleatório (24 hex). Usa o gerador criptográfico do navegador quando existe. */
+function authNewSalt() {
+  try {
+    const a = new Uint8Array(12);
+    (window.crypto || crypto).getRandomValues(a);
+    return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) {
+    return (Math.random().toString(16).slice(2, 14) + Math.random().toString(16).slice(2, 14)).slice(0, 24);
+  }
+}
+/* Hash da senha com sal e várias rodadas (a senha em si nunca é guardada). */
+const AUTH_ROUNDS = 1500;
+function authHash(senha, salt) {
+  let h = authSha256Hex(String(salt || "") + ":" + String(senha == null ? "" : senha));
+  for (let i = 1; i < AUTH_ROUNDS; i++) h = authSha256Hex(h + String(salt || ""));
+  return h;
+}
+function authVerify(user, senha) { return !!user && !!user.senhaHash && authHash(senha, user.salt || "") === user.senhaHash; }
+/* Confere login + senha na lista de usuários: { ok, user, erro: "login" | "inativo" | "senha" }. */
+function authCheck(users, login, senha) {
+  const l = authNormalizeLogin(login);
+  const u = (users || []).find((x) => x && authNormalizeLogin(x.login) === l) || null;
+  if (!u) return { ok: false, erro: "login", user: null };
+  if (!u.ativo) return { ok: false, erro: "inativo", user: u };
+  if (!authVerify(u, senha)) return { ok: false, erro: "senha", user: u };
+  return { ok: true, user: u, erro: "" };
+}
+/* Login já usado por outro usuário? */
+function authLoginTaken(users, login, excludeId) {
+  const l = authNormalizeLogin(login);
+  return !!l && (users || []).some((u) => u && u.id !== excludeId && authNormalizeLogin(u.login) === l);
+}
+/* Administradores ativos (para não deixar o CRM sem nenhum). */
+function activeAdmins(users) { return (users || []).filter((u) => u && u.ativo && u.perfil === "admin"); }
+
+/* ------------------------------ atividades -------------------------------- */
+const ACTIVITY_TYPES = [
+  { key: "acesso",   label: "Acesso",         icon: "UserCheck",  color: "#64748B", soft: "#F1F5F9", text: "#475569" },
+  { key: "cliente",  label: "Clientes",       icon: "Users",      color: "#3152E4", soft: "#EFF4FF", text: "#2541B8" },
+  { key: "etapa",    label: "Etapas",         icon: "Kanban",     color: "#D97706", soft: "#FEF3C7", text: "#92400E" },
+  { key: "tarefa",   label: "Tarefas",        icon: "ListChecks", color: "#047857", soft: "#E6F6EE", text: "#065F46" },
+  { key: "contato",  label: "Contatos",       icon: "Phone",      color: "#0E7490", soft: "#ECFEFF", text: "#155E75" },
+  { key: "nota",     label: "Notas",          icon: "Note",       color: "#7C3AED", soft: "#F5F3FF", text: "#5B21B6" },
+  { key: "proposta", label: "Propostas",      icon: "FileText",   color: "#BE185D", soft: "#FDF2F8", text: "#9D174D" },
+  { key: "dados",    label: "Backup e dados", icon: "Save",       color: "#B45309", soft: "#FFF7ED", text: "#9A3412" },
+  { key: "config",   label: "Configurações",  icon: "Cog",        color: "#475569", soft: "#F1F5F9", text: "#334155" },
+  { key: "usuarios", label: "Usuários",       icon: "Shield",     color: "#4338CA", soft: "#EEF2FF", text: "#3730A3" },
+];
+function activityTypeMeta(key) { return ACTIVITY_TYPES.find((t) => t.key === key) || ACTIVITY_TYPES[1]; }
+/* Tipo da linha do tempo do cliente (HISTORY_TIPOS) → tipo de atividade. */
+const ACTIVITY_FROM_HISTORY = { cadastro: "cliente", etapa: "etapa", tarefa: "tarefa", nota: "nota", contato: "contato", mensagem: "contato", proposta: "proposta", item: "cliente", dados: "cliente" };
+const ACTIVITY_MAX = 2000;
+const ACTIVITY_DEDUPE_MS = 120000;
+function activityEntry(user, tipo, texto, ref) {
+  const r = ref && typeof ref === "object" ? ref : {};
+  return {
+    id: uid(), at: nowISO(), userId: user ? String(user.id || "") : "", userNome: user ? String(user.nome || "") : "",
+    tipo: activityTypeMeta(tipo).key, texto: String(texto == null ? "" : texto).slice(0, 240),
+    modId: String(r.modId || ""), clientId: String(r.clientId || ""), clientNome: String(r.clientNome || ""),
+  };
+}
+/* Nova lista com a entrada na frente. Repetição igual (mesmo usuário, tipo, texto e cliente) em menos de 2 min é ignorada. */
+function appendActivity(list, entry) {
+  const L = Array.isArray(list) ? list : [];
+  const last = L[0];
+  if (last && last.userId === entry.userId && last.tipo === entry.tipo && last.texto === entry.texto && last.clientId === entry.clientId
+      && Math.abs(new Date(entry.at).getTime() - new Date(last.at).getTime()) < ACTIVITY_DEDUPE_MS) return L;
+  return [entry, ...L].slice(0, ACTIVITY_MAX);
+}
+/* Entradas dos últimos N dias (0 = todas). */
+function activityInDays(list, days) {
+  const L = Array.isArray(list) ? list : [];
+  if (!days) return L;
+  const since = Date.now() - days * 864e5;
+  return L.filter((e) => new Date(e.at).getTime() >= since);
+}
+/* Resumo por usuário: eventos, último evento e contagem por tipo. */
+function activitySummary(list, users) {
+  const by = {};
+  (users || []).forEach((u) => { by[u.id] = { userId: u.id, nome: u.nome, ativo: u.ativo !== false, perfil: u.perfil, ultimoAcesso: u.ultimoAcesso || "", total: 0, ultimo: "", porTipo: {} }; });
+  (list || []).forEach((e) => {
+    const k = e.userId || "";
+    if (!by[k]) by[k] = { userId: k, nome: e.userNome || "Usuário removido", ativo: false, perfil: "", ultimoAcesso: "", total: 0, ultimo: "", porTipo: {}, removido: true };
+    const s = by[k];
+    s.total += 1;
+    if (!s.ultimo || e.at > s.ultimo) s.ultimo = e.at;
+    s.porTipo[e.tipo] = (s.porTipo[e.tipo] || 0) + 1;
+  });
+  return Object.values(by).sort((a, b) => (b.ultimo || "").localeCompare(a.ultimo || "") || a.nome.localeCompare(b.nome));
+}
+function activityToCSV(list) {
+  const head = ["Quando", "Usuário", "Tipo", "O que aconteceu", "Cliente", "Módulo"];
+  const rows = (list || []).map((e) => [fmtDateTime(e.at), e.userNome, activityTypeMeta(e.tipo).label, e.texto, e.clientNome, e.modId]);
   return "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
 }

@@ -4,6 +4,26 @@ CRM multi-produto da Próspera Benefícios em um único arquivo `index.html`
 (React + Tailwind via CDN, sem instalação). Os dados ficam salvos no navegador
 de quem usa (localStorage); não há servidor nem sincronização entre máquinas.
 
+## Novidades da versão 5 (02/11/2026) — usuários, abas por pessoa e atividades
+
+- **Login**: no primeiro acesso o CRM pede para criar o **primeiro administrador** (nome, login e senha). Depois,
+  toda abertura passa pela tela de login. "Sair" fica no rodapé da barra lateral; clicar no próprio nome troca a senha.
+- **Usuários** (só administrador): criar, editar, redefinir senha (a pessoa troca no próximo acesso), desativar/reativar e
+  excluir. Perfis: **Administrador** (vê tudo, inclusive Usuários e Atividades) e **Usuário**.
+- **Abas por usuário**: para cada usuário o administrador liga/desliga Painel, Agenda, Clientes, Funil de vendas,
+  Relatórios, Configurações e backup e Gerenciar módulos. O que está desligado some do menu; links diretos (#funil)
+  caem na primeira aba liberada.
+- **Atividades** (só administrador): registro de tudo o que cada pessoa fez (entrou/saiu, clientes cadastrados/editados/
+  excluídos, etapas, tarefas, contatos, notas, propostas, backup/planilhas, configurações e gestão de usuários), com
+  resumo por usuário, filtros por período/usuário/tipo, busca e exportação CSV. Guarda os últimos 2.000 registros.
+- Cada usuário é ligado a um **vendedor da equipe** (criado automaticamente com o mesmo nome, se você não escolher um
+  existente): ao entrar, ele vira o "quem sou eu" (responsável padrão, autor das notas, filtro "Só meus").
+- O **backup** passa a levar usuários (senhas guardadas só como hash com sal, nunca em texto) e o registro de atividades.
+  Backups das versões 2, 3 e 4 continuam importáveis (sem usuários: os atuais são mantidos).
+- Importante: como tudo fica no navegador, os usuários valem **por navegador**. Para o time usar em outra máquina,
+  exporte o backup e importe lá. O login organiza o uso e registra quem fez o quê; não é uma proteção contra alguém
+  com acesso técnico ao computador.
+
 ## O que tem (versão 4 — 29/10/2026)
 
 **Telas**
@@ -54,18 +74,22 @@ Atalhos: `/` busca, `n` novo cliente, `Esc` fecha, `Enter` salva. Links diretos:
 ├── index.html            # O CRM completo, GERADO a partir de src/ (não edite direto)
 ├── src/                  # Código-fonte dividido em módulos (edite aqui)
 │   ├── _head.html        #   <head>, Tailwind config e CSS
-│   ├── 01-core.js        #   constantes e helpers (tarefas, contato, CSV, valor do negócio)
+│   ├── 01-core.js        #   constantes e helpers (tarefas, contato, CSV, valor do negócio, perfis/abas, hash de senha, atividades)
 │   ├── 02-icons.jsx      #   ícones
 │   ├── 03-modules-seed.js#   módulos nativos e dados de exemplo (demo)
-│   ├── 04-storage.js     #   persistência, migração de dados antigos, regras (SLA, pontuação, automações...)
+│   ├── 04-storage.js     #   persistência (clientes, configurações, usuários, sessão, atividades), migração, regras
 │   ├── 05-ui.jsx         #   componentes visuais compartilhados
-│   ├── 06-app.jsx        #   tela raiz (estado e fluxos)
+│   ├── 06-app.jsx        #   tela raiz (estado, login, permissões, fluxos e registro de atividades)
 │   ├── 07-sidebar.jsx … 19-agenda.jsx   # cada tela/janela em seu arquivo
+│   ├── 20-auth.jsx       #   primeiro acesso, login, trocar senha
+│   ├── 21-users.jsx      #   tela Usuários (formulário com abas por usuário, redefinir senha)
+│   ├── 22-activity.jsx   #   tela Atividades
 │   └── 99-mount.jsx      #   montagem do React + tela de erro
 ├── build.py              # Junta src/ em index.html:  python build.py
 ├── Gerar index.bat       # Mesmo que o build.py, com duplo clique
 ├── docs/CONTRATO-V3.md   # Modelo de dados e regras da v3 (base)
 ├── docs/CONTRATO-V4.md   # O que mudou na v4 (modelo de dados, API do core, props, fluxos)
+├── docs/CONTRATO-V5.md   # O que mudou na v5 (usuários, permissões por aba, atividades)
 ├── docs/ESTUDO-INTEGRACAO-GMAIL-WHATSAPP.md   # Estudo de 28/10/2026 sobre automatizar e-mail e WhatsApp
 ├── assets/logo.png       # Logo da Próspera
 ├── backup/               # Versões anteriores (v1, v2 e v3)
@@ -91,8 +115,8 @@ python -m http.server 8000
 
 ## Dados antigos
 
-Quem já usava a versão 3 não perde nada: as chaves do navegador são as mesmas e os dados ganham os campos novos
-na carga (tarefas com hora/tipo, histórico tipado, campo "Receita mensal estimada" em Adquirência). Backups das
+Quem já usava as versões 3 ou 4 não perde nada: as chaves do navegador são as mesmas e os dados ganham os campos novos
+na carga. Na primeira abertura da v5 o CRM só pede para criar o administrador; os clientes continuam lá. Backups das
 versões 2, 3 e 4 continuam importáveis. Em Adquirência, os itens antigos ficam com receita 0 até serem preenchidos.
 
 ## Site publicado

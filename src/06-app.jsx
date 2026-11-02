@@ -30,8 +30,17 @@ function ProsperaCRM() {
   const [activeModId, setActiveModId] = useState(() => (modules[0] || initialModules[0]).id);
   const [savedAt, setSavedAt] = useState(null);
   const [settings, setSettings] = useState(loadSettings);
+  const [users, setUsers] = useState(loadUsers);
+  const [session, setSession] = useState(loadSession);
+  const [activity, setActivity] = useState(loadActivity);
+  const [accountOpen, setAccountOpen] = useState(false);   // false | true (trocar senha) | "forcada" (admin redefiniu)
   const [saveError, setSaveError] = useState(false);
-  const saveFail = useRef({ modules: false, settings: false });
+  const saveFail = useRef({ modules: false, settings: false, users: false });
+  /* Usuário logado (sessão + lista). Null = tela de login. A ref permite registrar atividades de dentro de callbacks. */
+  const currentUser = useMemo(() => users.find((u) => u.id === (session && session.userId) && u.ativo) || null, [users, session]);
+  const currentUserRef = useRef(null);
+  currentUserRef.current = currentUser;
+  const can = (key) => userCan(currentUser, key);
 
   /* A tela atual vai na URL (#painel, #clientes, #funil, #agenda, #relatorios) para poder favoritar ou compartilhar o link. */
   const [view, setView] = useState(() => { const h = (window.location.hash || "").replace("#", ""); return VIEW_HASH[h] || "dashboard"; });
@@ -81,17 +90,20 @@ function ProsperaCRM() {
   }, []);
   const dismissToast = (id) => setToasts((ts) => ts.filter((x) => x.id !== id));
   const askConfirm = (opts) => setConfirmState(opts);
-  const openSettings = useCallback((tab) => { setSettingsTab(typeof tab === "string" ? tab : null); setSettingsOpen(true); setSidebarOpen(false); }, []);
+  const openSettings = useCallback((tab) => {
+    if (!userCan(currentUserRef.current, "configuracoes")) { notify({ kind: "warning", title: "Área não liberada", message: "Peça a um administrador para liberar Configurações e backup para você." }); return; }
+    setSettingsTab(typeof tab === "string" ? tab : null); setSettingsOpen(true); setSidebarOpen(false);
+  }, [notify]);
   const plural = (n, um, varios) => n + " " + (n === 1 ? um : varios);
 
   /* ---- salvamento (com aviso quando o navegador recusa gravar) ---- */
   const reportSave = useCallback((kind, ok) => {
     const f = saveFail.current;
     if (ok) {
-      if (f[kind]) { f[kind] = false; setSaveError(f.modules || f.settings); }
+      if (f[kind]) { f[kind] = false; setSaveError(!!(f.modules || f.settings || f.users)); }
       return;
     }
-    const wasFailing = f.modules || f.settings;
+    const wasFailing = f.modules || f.settings || f.users;
     f[kind] = true;
     setSaveError(true);
     if (!wasFailing) {
@@ -102,6 +114,16 @@ function ProsperaCRM() {
   }, [notify, openSettings]);
   useEffect(() => { const ok = saveModules(modules); if (ok) setSavedAt(Date.now()); reportSave("modules", ok); }, [modules]);
   useEffect(() => { reportSave("settings", saveSettings(settings)); }, [settings]);
+  useEffect(() => { reportSave("users", saveUsers(users)); }, [users]);
+  useEffect(() => { saveActivity(activity); }, [activity]);
+  useEffect(() => { saveSession(session); }, [session]);
+
+  /* ---- registro de atividades (v5): quem fez, o quê e em qual cliente. Nunca quebra a ação principal. ---- */
+  const act = useCallback((tipo, texto, ref) => {
+    const u = currentUserRef.current;
+    if (!u) return;
+    try { setActivity((list) => appendActivity(list, activityEntry(u, tipo, texto, ref))); } catch (e) { console.warn("Falha ao registrar atividade", e); }
+  }, []);
   const saveSettingsNow = (next) => setSettings(next);
 
   /* ---- primeiro commit: tira a tela de carregamento e avisa se algum dado salvo estava ilegível ---- */
@@ -124,6 +146,15 @@ function ProsperaCRM() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  /* ---- senha redefinida pelo administrador: pede a troca assim que a pessoa entra (ou reabre o CRM já logada) ---- */
+  useEffect(() => {
+    if (currentUser && currentUser.trocarSenha) setAccountOpen("forcada");
+  }, [currentUser && currentUser.id, currentUser && currentUser.trocarSenha]);
+  /* ---- permissões: se a tela atual não está liberada para o usuário, vai para a primeira liberada ---- */
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!userCan(currentUser, view)) { const f = firstAllowedView(currentUser); if (f) setView(f); }
+  }, [currentUser, view]);
 
   /* ---- mutações ---- */
   const setModuleClients = (updater, modId = mod.id) =>
@@ -139,12 +170,21 @@ function ProsperaCRM() {
       history: entry ? [appHistoryEntry(entry.text, entry.extra), ...(c.history || [])].slice(0, APP_HISTORY_MAX) : (c.history || []),
     };
   };
-  const updateClientIn = (modId, id, fn, log, extra) =>
+  /* Registra em "Atividades" uma ação sobre um cliente (mesmo texto da linha do tempo da ficha). */
+  const actClient = (modId, clientId, texto, histTipo, client) => {
+    const m = modules.find((x) => x.id === modId);
+    const c = client || (m ? m.clients.find((x) => x.id === clientId) : null);
+    act(ACTIVITY_FROM_HISTORY[histTipo || appHistoryTipo(texto)] || "cliente", texto, { modId, clientId, clientNome: c ? c.nome : "" });
+  };
+  const updateClientIn = (modId, id, fn, log, extra) => {
+    const logText = typeof log === "string" ? log : (log && typeof log === "object" && log.text) ? log.text : "";
+    if (logText) actClient(modId, id, logText, (extra && extra.tipo) || (log && log.extra && log.extra.tipo) || "");
     setModules((ms) => ms.map((m) => (m.id !== modId ? m : { ...m, clients: m.clients.map((c) => {
       if (c.id !== id) return c;
       const next = fn(c);
       return touch(next, typeof log === "function" ? log(c, next) : log, extra);
     }) })));
+  };
   const updateClient = (id, fn, log, extra) => updateClientIn(mod.id, id, fn, log, extra);
   const logClientIn = (modId, id, text, extra) => updateClientIn(modId, id, (c) => c, text, extra);
   const logClient = (id, text, extra) => logClientIn(mod.id, id, text, extra);
@@ -175,9 +215,12 @@ function ProsperaCRM() {
       ];
       return { ...next, updatedAt: at, history: [...entries, ...(x.history || [])].slice(0, APP_HISTORY_MAX) };
     }), modId);
+    const motivoTxt = status === "perdido" && extra.motivoPerda ? " (motivo: " + (motivoLabel(settings, extra.motivoPerda) || extra.motivoPerda) + ")" : "";
+    actClient(modId, id, "Etapa alterada para " + label + motivoTxt, "etapa", before);
     const n = preview.created.length;
     const undo = () => {
       setModuleClients((cs) => cs.map((x) => (x.id === id ? { ...snapshot, updatedAt: nowISO() } : x)), modId);
+      actClient(modId, id, "Mudança de etapa desfeita: voltou para " + statusMeta(snapshot.status).label, "etapa", snapshot);
       notify({ title: "Movimento desfeito", message: snapshot.nome + " voltou para " + statusMeta(snapshot.status).label, kind: "info", duration: 2500 });
     };
     notify({ title: before.nome + " movido para " + label, kind: "info", duration: 6000,
@@ -241,6 +284,7 @@ function ProsperaCRM() {
       appHistoryEntry("Cliente cadastrado", { tipo: "cadastro" }),
     ];
     setModuleClients((cs) => [c, ...cs]);
+    actClient(mod.id, c.id, "Cliente cadastrado", "cadastro", c);
     const n = r.created.length;
     notify({ title: "Cliente cadastrado", message: (n ? plural(n, "tarefa criada automaticamente", "tarefas criadas automaticamente") + ". " : "") + "Agora adicione os " + mod.itemLabelPlural.toLowerCase() + " dele." });
     setFormOpen(false); setEditing(null); setRequireFor(null);
@@ -267,12 +311,13 @@ function ProsperaCRM() {
       confirmLabel: "Excluir cliente", danger: true,
       onConfirm: () => {
         setModuleClients((cs) => cs.filter((x) => x.id !== id), modId);
+        actClient(modId, id, "Cliente excluído", "cadastro", c);
         if (openId === id) setOpenId(null);
         if (proposalFor === id) setProposalFor(null);
         if (nextStepFor && nextStepFor.clientId === id) setNextStepFor(null);
         if (contactFor && contactFor.clientId === id) setContactFor(null);
         notify({ title: "Cliente excluído", message: c.nome, kind: "info", duration: 7000,
-          action: { label: "Desfazer", onClick: () => { setModuleClients((cs) => { const n = [...cs]; n.splice(Math.min(idx, n.length), 0, c); return n; }, modId); } } });
+          action: { label: "Desfazer", onClick: () => { setModuleClients((cs) => { const n = [...cs]; n.splice(Math.min(idx, n.length), 0, c); return n; }, modId); actClient(modId, id, "Exclusão desfeita", "cadastro", c); } } });
       },
     });
   };
@@ -296,6 +341,10 @@ function ProsperaCRM() {
   };
   const patchTaskIn = (modId, clientId, taskId, patch) => {
     const p = patch && typeof patch === "object" ? patch : {};
+    const mm = modules.find((x) => x.id === modId);
+    const cc = mm ? mm.clients.find((x) => x.id === clientId) : null;
+    const tt = cc ? (cc.tasks || []).find((x) => x.id === taskId) : null;
+    if (tt && p.data !== undefined && p.data !== tt.data) actClient(modId, clientId, p.data ? "Tarefa adiada para " + appShortDate(p.data) + ": " + tt.titulo : "Tarefa sem data: " + tt.titulo, "tarefa", cc);
     updateClientIn(modId, clientId, (c) => ({ ...c, tasks: (c.tasks || []).map((t) => (t.id === taskId ? { ...t, ...p } : t)) }),
       (c) => {
         const t = (c.tasks || []).find((x) => x.id === taskId);
@@ -337,7 +386,8 @@ function ProsperaCRM() {
   /* ---- módulos ---- */
   const addModule = (newMod) => {
     setModules((ms) => [...ms, { ...newMod, clients: [] }]);
-    setActiveModId(newMod.id); setModuleManagerOpen(false); setView("dashboard");
+    act("config", "Módulo criado: " + newMod.nome);
+    setActiveModId(newMod.id); setModuleManagerOpen(false); setView(can("dashboard") ? "dashboard" : firstAllowedView(currentUser) || "dashboard");
     notify({ title: "Módulo criado", message: newMod.nome });
   };
   const deleteModule = (id) => {
@@ -353,6 +403,7 @@ function ProsperaCRM() {
           if (id === activeModId) setActiveModId(left[0].id);
           return left;
         });
+        act("config", "Módulo excluído: " + (m ? m.nome : "") + " (" + (m ? m.clients.length : 0) + " cliente(s))");
         notify({ title: "Módulo excluído", kind: "info" });
       },
     });
@@ -376,6 +427,7 @@ function ProsperaCRM() {
       clearSavedModules(); clearSavedSettings();
       setModules(initialModules); setActiveModId(initialModules[0].id); setSettings(freshSettings());
       setOpenId(null); setSettingsOpen(false);
+      act("dados", "Dados de exemplo restaurados (clientes e configurações apagados)");
       notify({ title: "Dados de exemplo restaurados", kind: "info" });
     },
   });
@@ -384,15 +436,31 @@ function ProsperaCRM() {
     const mods = (data.modules || []).map(hydrateModule);
     if (!mods.length) { notify({ title: "Arquivo sem módulos", message: "Nada para importar.", kind: "error" }); return; }
     const nextSettings = data.settings ? hydrateSettings(data.settings) : null;
+    const nextUsers = Array.isArray(data.users) && data.users.length ? hydrateUsers(data.users) : null;
+    const nextActivity = Array.isArray(data.activity) ? hydrateActivity(data.activity) : null;
+    const nClients = mods.reduce((s, m) => s + m.clients.length, 0);
     askConfirm({
       title: "Importar backup?",
-      message: "Os dados atuais serão substituídos por " + mods.length + " módulo(s) e " + mods.reduce((s, m) => s + m.clients.length, 0) + " cliente(s) do arquivo" + (nextSettings ? ", incluindo as configurações" : "") + ".",
+      message: "Os dados atuais serão substituídos por " + mods.length + " módulo(s) e " + nClients + " cliente(s) do arquivo" + (nextSettings ? ", incluindo as configurações" : "") + (nextUsers ? " e " + nextUsers.length + " usuário(s)" : "") + ".",
       confirmLabel: "Importar", danger: true,
       onConfirm: () => {
         setModules(mods); setActiveModId(mods[0].id); setOpenId(null);
         if (nextSettings) setSettings(nextSettings);
+        if (nextUsers) {
+          /* Quem está importando continua com acesso: pelo mesmo login do arquivo ou mantendo o próprio usuário de agora. */
+          let list = nextUsers;
+          const me = currentUserRef.current;
+          if (me) {
+            const same = list.find((u) => u.login === me.login);
+            if (!same) list = [...list, me];
+            setSession({ userId: (same || me).id, at: nowISO() });
+          }
+          setUsers(list);
+        }
+        if (nextActivity) setActivity(nextActivity);
         setSettingsOpen(false);
-        notify({ title: "Backup importado", message: nextSettings ? "Clientes e configurações restaurados." : "Clientes restaurados." });
+        act("dados", "Backup importado: " + mods.length + " módulo(s), " + nClients + " cliente(s)" + (nextUsers ? ", " + nextUsers.length + " usuário(s)" : ""));
+        notify({ title: "Backup importado", message: (nextSettings ? "Clientes e configurações restaurados." : "Clientes restaurados.") + (nextUsers ? " Usuários restaurados." : "") });
       },
     });
   };
@@ -414,6 +482,7 @@ function ProsperaCRM() {
       confirmLabel: "Remover exemplos", danger: true,
       onConfirm: () => {
         setModules((ms) => removeDemoClients(ms));
+        act("dados", "Exemplos removidos: " + plural(n, "cliente de exemplo", "clientes de exemplo"));
         if (openClient && openClient.demo) setOpenId(null);
         setSettingsOpen(false);
         notify({ title: "Exemplos removidos", message: plural(n, "cliente de exemplo apagado", "clientes de exemplo apagados"), kind: "info" });
@@ -438,10 +507,119 @@ function ProsperaCRM() {
     });
     if (!list.length) { notify({ title: "Nenhum cliente para importar", kind: "warning" }); return; }
     setModuleClients((cs) => [...list, ...cs], m.id);
+    act("dados", "Planilha importada: " + plural(list.length, "cliente", "clientes") + " em " + m.nome);
     if (m.id !== activeModId) setActiveModId(m.id);
     setSettingsOpen(false); setOpenId(null);
     setView("clientes");
     notify({ title: plural(list.length, "cliente importado", "clientes importados"), message: "Adicionados em " + m.nome + "." });
+  };
+
+  /* ---- acesso e usuários (v5) ---- */
+  /* Vendedor na equipe para um usuário: "__novo__" cria um com o mesmo nome; id existente é mantido; "" = nenhum. */
+  const resolveVendedor = (s, nome, vendedorId) => {
+    if (vendedorId === "__novo__") {
+      const id = settingsNewId(nome, (s.vendedores || []).map((v) => v.id));
+      return { settings: { ...s, vendedores: [...(s.vendedores || []), { id, nome, metaMensal: 0 }] }, vendedorId: id };
+    }
+    return { settings: s, vendedorId: isKnownVendedor(s, vendedorId) ? vendedorId : "" };
+  };
+  /* Entra como o usuário: sessão, "quem sou eu" = vendedor vinculado, registro e, se preciso, troca de senha obrigatória. */
+  const enterAs = (user) => {
+    const at = nowISO();
+    setUsers((us) => us.map((u) => (u.id === user.id ? { ...u, ultimoAcesso: at } : u)));
+    setSession({ userId: user.id, at });
+    setSettings((s) => ({ ...s, usuarioAtual: isKnownVendedor(s, user.vendedorId) ? user.vendedorId : "" }));
+    currentUserRef.current = user;
+    act("acesso", "Entrou no CRM");
+    if (!userCan(user, view)) setView(firstAllowedView(user) || "dashboard");
+  };
+  const doSetup = ({ nome, login, senha, vendedorId }) => {
+    const r = resolveVendedor(settings, nome, vendedorId);
+    const salt = authNewSalt();
+    const u = hydrateUser({ id: uid(), nome, login, salt, senhaHash: authHash(senha, salt), perfil: "admin", ativo: true, vendedorId: r.vendedorId, abas: permDefaults(true), criadoEm: nowISO() });
+    setSettings({ ...r.settings, usuarioAtual: r.vendedorId });
+    setUsers([u]);
+    currentUserRef.current = u;
+    act("usuarios", "Primeiro administrador criado: " + nome);
+    enterAs(u);
+    notify({ title: "Bem-vindo, " + nome.split(" ")[0] + "!", message: "Você é o administrador. Cadastre o time em Usuários e escolha o que cada um vê.", duration: 7000 });
+  };
+  const doLogout = () => {
+    act("acesso", "Saiu do CRM");
+    setSession(null); setAccountOpen(false); setSettingsOpen(false); setModuleManagerOpen(false);
+    setOpenId(null); setFormOpen(false); setEditing(null); setSidebarOpen(false); setConfirmState(null);
+    setGate(null); setLoss(null); setProposalFor(null); setNextStepFor(null); setContactFor(null);
+  };
+  const changeOwnPassword = (nova) => {
+    const me = currentUser;
+    if (!me) return;
+    const salt = authNewSalt();
+    setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, salt, senhaHash: authHash(nova, salt), trocarSenha: false } : u)));
+    setAccountOpen(false);
+    act("acesso", "Trocou a própria senha");
+    notify({ title: "Senha alterada", message: "Use a nova senha no próximo acesso." });
+  };
+  const createUser = (data) => {
+    const r = resolveVendedor(settings, data.nome, data.vendedorId);
+    if (r.settings !== settings) setSettings(r.settings);
+    const salt = authNewSalt();
+    const u = hydrateUser({ id: uid(), nome: data.nome, login: data.login, salt, senhaHash: authHash(data.senha, salt), perfil: data.perfil, ativo: true,
+      vendedorId: r.vendedorId, abas: data.abas, criadoEm: nowISO(), trocarSenha: !!data.trocarSenha });
+    setUsers((us) => [...us, u]);
+    act("usuarios", "Usuário criado: " + u.nome + " (" + perfilLabel(u.perfil) + ")");
+    notify({ title: "Usuário criado", message: u.nome + " já pode entrar com o login " + u.login + "." });
+  };
+  const updateUser = (id, data) => {
+    const cur = users.find((u) => u.id === id);
+    if (!cur) return;
+    if (cur.perfil === "admin" && cur.ativo && data.perfil !== "admin" && activeAdmins(users).filter((u) => u.id !== id).length === 0) {
+      notify({ kind: "error", title: "O CRM precisa de ao menos um administrador ativo" }); return;
+    }
+    const r = resolveVendedor(settings, data.nome, data.vendedorId);
+    if (r.settings !== settings) setSettings(r.settings);
+    const next = hydrateUser({ ...cur, nome: data.nome, login: data.login, perfil: data.perfil, vendedorId: r.vendedorId, abas: data.abas });
+    setUsers((us) => us.map((u) => (u.id === id ? next : u)));
+    if (currentUser && currentUser.id === id) setSettings((s) => ({ ...s, usuarioAtual: isKnownVendedor(s, next.vendedorId) ? next.vendedorId : "" }));
+    act("usuarios", "Usuário editado: " + next.nome + " (" + perfilLabel(next.perfil) + (isAdmin(next) ? "" : " · abas: " + (userTabLabels(next).join(", ") || "nenhuma")) + ")");
+    notify({ title: "Usuário atualizado", message: next.nome });
+  };
+  const resetUserPassword = (id, senha) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    const self = !!currentUser && u.id === currentUser.id;
+    const salt = authNewSalt();
+    setUsers((us) => us.map((x) => (x.id === id ? { ...x, salt, senhaHash: authHash(senha, salt), trocarSenha: !self } : x)));
+    act("usuarios", self ? "Redefiniu a própria senha" : "Senha redefinida: " + u.nome);
+    notify({ title: "Senha redefinida", message: self ? "Sua senha foi alterada." : u.nome + " deve trocar a senha no próximo acesso." });
+  };
+  const toggleUserActive = (id) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    if (currentUser && u.id === currentUser.id) { notify({ kind: "warning", title: "Você não pode desativar o seu próprio usuário" }); return; }
+    if (u.ativo && isAdmin(u) && activeAdmins(users).length <= 1) { notify({ kind: "warning", title: "Único administrador ativo", message: "Torne outra pessoa administradora antes de desativar." }); return; }
+    const apply = () => {
+      setUsers((us) => us.map((x) => (x.id === id ? { ...x, ativo: !x.ativo } : x)));
+      act("usuarios", (u.ativo ? "Acesso desativado: " : "Acesso reativado: ") + u.nome);
+      notify({ title: u.ativo ? "Acesso desativado" : "Acesso reativado", message: u.nome, kind: "info" });
+    };
+    if (u.ativo) askConfirm({ title: "Desativar o acesso de " + u.nome + "?", message: "A pessoa não consegue mais entrar até ser reativada. Os clientes e os registros dela continuam.", confirmLabel: "Desativar", danger: true, onConfirm: apply });
+    else apply();
+  };
+  const deleteUser = (id) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    if (currentUser && u.id === currentUser.id) { notify({ kind: "warning", title: "Você não pode excluir o seu próprio usuário" }); return; }
+    if (isAdmin(u) && u.ativo && activeAdmins(users).length <= 1) { notify({ kind: "warning", title: "Único administrador ativo", message: "Torne outra pessoa administradora antes de excluir." }); return; }
+    askConfirm({
+      title: "Excluir o usuário " + u.nome + "?",
+      message: "O login deixa de existir. O vendedor na equipe, os clientes e o registro de atividades continuam. Se a pessoa pode voltar, prefira desativar.",
+      confirmLabel: "Excluir usuário", danger: true,
+      onConfirm: () => {
+        setUsers((us) => us.filter((x) => x.id !== id));
+        act("usuarios", "Usuário excluído: " + u.nome + " (" + u.login + ")");
+        notify({ title: "Usuário excluído", message: u.nome, kind: "info" });
+      },
+    });
   };
 
   /* ---- derivados ---- */
@@ -480,14 +658,16 @@ function ProsperaCRM() {
   const isListView = view === "clientes" || view === "funil";
 
   /* ---- teclado e scroll ---- */
-  const anyOverlay = !!(openId || formOpen || moduleManagerOpen || settingsOpen || confirmState || sidebarOpen || gate || loss || proposalFor || nextStepFor || contactFor);
+  const anyOverlay = !!(openId || formOpen || moduleManagerOpen || settingsOpen || confirmState || sidebarOpen || gate || loss || proposalFor || nextStepFor || contactFor || accountOpen);
   useEffect(() => { document.body.style.overflow = anyOverlay ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [anyOverlay]);
   useEffect(() => {
     const onKey = (e) => {
+      if (!currentUserRef.current) return;   // telas de login / primeiro acesso não usam os atalhos
       if (e.key === "Escape") {
         /* Esc enquanto digita só tira o foco do campo (não apaga nada nem fecha a janela). O segundo Esc fecha. */
         if (isTyping(e.target)) { e.target.blur(); return; }
         if (confirmState) setConfirmState(null);
+        else if (accountOpen) { if (accountOpen !== "forcada") setAccountOpen(false); }
         else if (nextStepFor) setNextStepFor(null);
         else if (contactFor) setContactFor(null);
         else if (gate) setGate(null);
@@ -500,7 +680,7 @@ function ProsperaCRM() {
         else if (sidebarOpen) setSidebarOpen(false);
       } else if (e.key === "/" && !isTyping(e.target) && !anyOverlay) {
         e.preventDefault();
-        if (!isListView) setView("clientes");
+        if (!isListView) { if (!userCan(currentUserRef.current, "clientes")) return; setView("clientes"); }
         setTimeout(() => searchRef.current && searchRef.current.focus(), 0);
       } else if ((e.key === "n" || e.key === "N") && !isTyping(e.target) && !anyOverlay && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -509,11 +689,17 @@ function ProsperaCRM() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmState, nextStepFor, contactFor, gate, loss, proposalFor, formOpen, settingsOpen, moduleManagerOpen, openId, sidebarOpen, anyOverlay, view]);
+  }, [confirmState, accountOpen, nextStepFor, contactFor, gate, loss, proposalFor, formOpen, settingsOpen, moduleManagerOpen, openId, sidebarOpen, anyOverlay, view]);
 
   const openNew = () => { setEditing(null); setRequireFor(null); setFormOpen(true); setSidebarOpen(false); };
-  const goView = (v) => { setView(v); setSidebarOpen(false); };
-  const onSearch = (v) => { setQuery(v); if (v && !isListView) setView("clientes"); };
+  const goView = (v) => { if (!can(v)) return; setView(v); setSidebarOpen(false); };
+  const onSearch = (v) => { setQuery(v); if (v && !isListView && can("clientes")) setView("clientes"); };
+
+  /* ---- acesso: sem usuários → cria o primeiro administrador; sem sessão → login ---- */
+  if (users.length === 0) return <><SetupScreen vendedores={settings.vendedores || []} onCreate={doSetup} /><Toasts toasts={toasts} onDismiss={dismissToast} /></>;
+  if (!currentUser) return <><LoginScreen users={users} onLogin={enterAs} /><Toasts toasts={toasts} onDismiss={dismissToast} /></>;
+  const isAdminView = ADMIN_VIEWS.includes(view);
+  const noAccess = !firstAllowedView(currentUser);
 
   const titles = {
     dashboard: { title: "Painel", subtitle: greeting() + " · " + longToday() },
@@ -521,12 +707,15 @@ function ProsperaCRM() {
     funil: { title: "Funil de vendas", subtitle: "Arraste os cards ou use o botão Mover" },
     agenda: { title: "Agenda", subtitle: "Tarefas de todos os módulos" },
     relatorios: { title: "Relatórios", subtitle: "Conversão, tempos e desempenho do time" },
+    usuarios: { title: "Usuários", subtitle: "Quem acessa o CRM e o que cada pessoa vê" },
+    atividades: { title: "Atividades", subtitle: "Registro de tudo o que foi feito no CRM" },
   };
   const heading = titles[view] || titles.dashboard;
   const showFilters = isListView;
   const vendedores = (settings && settings.vendedores) || [];
 
-  const sidebarProps = { modules, mod, view, settings, saveError, onSwitch: switchModule, onView: goView, onManage: () => { setModuleManagerOpen(true); setSidebarOpen(false); }, onSettings: openSettings, savedAt };
+  const sidebarProps = { modules, mod, view, settings, saveError, onSwitch: switchModule, onView: goView, onManage: () => { if (!can("modulos")) return; setModuleManagerOpen(true); setSidebarOpen(false); }, onSettings: openSettings, savedAt,
+    user: currentUser, can, onLogout: doLogout, onAccount: () => setAccountOpen(true), usersCount: users.length };
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
@@ -548,7 +737,12 @@ function ProsperaCRM() {
         <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
-              {view === "agenda"
+              {isAdminView
+                ? <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                    <span className="flex h-4 w-4 items-center justify-center rounded bg-indigo-600 text-white"><I.Shield size={10} /></span>
+                    Administração
+                  </div>
+                : view === "agenda"
                 ? <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
                     <span className="flex h-4 w-4 items-center justify-center rounded bg-ink text-white"><I.Layers size={10} /></span>
                     Todos os módulos
@@ -560,7 +754,7 @@ function ProsperaCRM() {
               <h1 className="text-2xl font-bold tracking-tight text-ink">{heading.title}</h1>
               <p className="mt-0.5 text-sm text-slate-500">{heading.subtitle}</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            {!isAdminView && <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative min-w-[240px] flex-1 lg:w-80">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><I.Search size={17} /></span>
                 <input ref={searchRef} value={query} onChange={(e) => onSearch(e.target.value)} placeholder="Buscar cliente, empresa, e-mail…" className={inputCls + " pl-9 pr-9"} aria-label="Buscar clientes" />
@@ -569,7 +763,7 @@ function ProsperaCRM() {
                   : <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 sm:block"><Kbd>/</Kbd></span>}
               </div>
               <button onClick={openNew} className={btn.primary + " hidden lg:inline-flex"} title="Atalho: N"><I.Plus size={18} /> Novo cliente</button>
-            </div>
+            </div>}
           </div>
 
           {showFilters && (
@@ -614,6 +808,15 @@ function ProsperaCRM() {
               onMove={requestMove} onContactLink={contactLink} />
           )}
           {view === "relatorios" && <Reports mod={mod} clients={clients} allModules={allModules} settings={settings} onOpen={openClientHere} />}
+          {view === "usuarios" && can("usuarios") && (
+            <UsersView users={users} currentUser={currentUser} settings={settings}
+              onCreate={createUser} onUpdate={updateUser} onResetPassword={resetUserPassword} onToggleActive={toggleUserActive} onDelete={deleteUser}
+              onGoActivity={() => goView("atividades")} />
+          )}
+          {view === "atividades" && can("atividades") && (
+            <ActivityView activity={activity} users={users} modules={allModules} onOpenIn={openClientIn} notify={notify} />
+          )}
+          {noAccess && <NoAccessView onLogout={doLogout} />}
         </main>
       </div>
 
@@ -644,7 +847,12 @@ function ProsperaCRM() {
       {settingsOpen && (
         <SettingsModal modules={modules} mod={mod} settings={settings} onSaveSettings={saveSettingsNow} savedAt={savedAt}
           onClose={() => setSettingsOpen(false)} onReset={resetData} onImport={importData} notify={notify} initialTab={settingsTab}
-          saveError={saveError} onDetachRef={detachRef} onRemoveDemo={removeDemo} onImportClients={importClients} />
+          saveError={saveError} onDetachRef={detachRef} onRemoveDemo={removeDemo} onImportClients={importClients}
+          users={users} activity={activity} currentUser={currentUser} onLog={act}
+          onGoUsers={can("usuarios") ? () => { setSettingsOpen(false); goView("usuarios"); } : null} />
+      )}
+      {accountOpen && (
+        <ChangePasswordModal user={currentUser} forced={accountOpen === "forcada"} onSave={changeOwnPassword} onClose={() => setAccountOpen(false)} onLogout={doLogout} />
       )}
       {gate && gateClient && <StageGateModal status={gate.status} missing={gate.missing} client={gateClient} onFill={gateFill} onCancel={() => setGate(null)} />}
       {loss && lossClient && <LossReasonModal settings={settings} client={lossClient} onConfirm={lossConfirm} onCancel={() => setLoss(null)} />}

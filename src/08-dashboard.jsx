@@ -135,7 +135,7 @@ function DashTasksCard({ tasks, multi, settings, onSetSoMeus, onToggleTask, onPa
         action={
           <div className="flex shrink-0 items-center gap-1.5">
             <DashChip active={soMeus} onClick={() => onSetSoMeus(!soMeus)} icon={<I.UserCheck size={13} />}
-              title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Defina quem é você em Configurações > Equipe para este filtro funcionar"}>
+              title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Seu usuário precisa estar vinculado a um vendedor (Usuários) para este filtro funcionar"}>
               Só meus
             </DashChip>
             <button type="button" onClick={() => onGo("agenda")} className="inline-flex h-8 items-center gap-1 rounded-full px-2 text-xs font-semibold text-brand transition hover:bg-brand-50">Agenda <I.ChevR size={14} /></button>
@@ -293,7 +293,7 @@ function Dashboard({ mod, clients, allModules, settings, onOpen, onOpenIn, onTog
   const hasDemo = hasDemoClients(mods);
   const realCount = countRealClients(mods);
   const steps = [
-    { key: "eu", label: "Definir quem sou eu", hint: "Para filtrar o que é seu e assinar as notas", done: !!settings.usuarioAtual, onClick: () => onOpenSettings("equipe") },
+    { key: "eu", label: "Vincular você a um vendedor", hint: "Vem do seu login: para filtrar o que é seu e assinar as notas", done: !!settings.usuarioAtual, onClick: () => onOpenSettings("equipe") },
     { key: "cliente", label: "Cadastrar o primeiro cliente", hint: "Leva menos de um minuto", done: realCount > 0, onClick: onNew },
     { key: "demo", label: "Remover os exemplos", hint: "Fica só o que é seu", done: !hasDemo, onClick: onRemoveDemo },
     { key: "backup", label: "Exportar um backup", hint: "Uma cópia de segurança dos seus dados", done: !!onboarding.lastBackupAt, onClick: () => onOpenSettings("backup") },

@@ -241,7 +241,7 @@ function downloadFile(name, content, type) {
 /* Célula de CSV: protege contra fórmulas (= + - @ no início viram texto) e escapa aspas/quebras de linha. */
 const csvCell = (v) => { let s = String(v ?? ""); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 const isTyping = (el) => !!el && (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable);
-const VIEW_HASH = { painel: "dashboard", dashboard: "dashboard", clientes: "clientes", funil: "funil", relatorios: "relatorios", agenda: "agenda" };
+const VIEW_HASH = { painel: "dashboard", dashboard: "dashboard", clientes: "clientes", funil: "funil", relatorios: "relatorios", agenda: "agenda", usuarios: "usuarios", atividades: "atividades" };
 
 /* ----------------------------- constantes v3 ------------------------------ */
 /* Porte da empresa e interesse do cliente (entram na pontuação de prioridade). */
@@ -522,6 +522,209 @@ function clientsToCSV(mod, settings, clients) {
   return "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
 }
 
+/* ============================== NOVIDADES v5 ==============================
+   Usuários com senha, perfis (administrador / usuário), abas visíveis por
+   usuário e registro de atividades. Aqui ficam só helpers puros (sem React e
+   sem localStorage); a persistência está em 04-storage.js.
+============================================================================ */
+
+/* ------------------------------ perfis / abas ----------------------------- */
+const USER_PERFIS = [
+  { key: "admin",   label: "Administrador", hint: "Vê tudo, gerencia usuários e acompanha as atividades." },
+  { key: "usuario", label: "Usuário",       hint: "Vê só as abas liberadas pelo administrador." },
+];
+function perfilLabel(key) { const p = USER_PERFIS.find((x) => x.key === key); return p ? p.label : "Usuário"; }
+/* Abas/áreas que um administrador pode liberar ou esconder para cada usuário. */
+const PERM_TABS = [
+  { key: "dashboard",     label: "Painel",                 icon: "Dash",       hint: "Indicadores, tarefas do dia e metas" },
+  { key: "agenda",        label: "Agenda",                 icon: "ListChecks", hint: "Tarefas de todos os módulos" },
+  { key: "clientes",      label: "Clientes",               icon: "List",       hint: "Lista e ficha dos clientes" },
+  { key: "funil",         label: "Funil de vendas",        icon: "Kanban",     hint: "Kanban por etapa" },
+  { key: "relatorios",    label: "Relatórios",             icon: "BarChart",   hint: "Conversão, tempos e desempenho" },
+  { key: "configuracoes", label: "Configurações e backup", icon: "Cog",        hint: "Equipe, funil, automações, mensagens, backup e planilhas" },
+  { key: "modulos",       label: "Gerenciar módulos",      icon: "Layers",     hint: "Criar e excluir módulos de produto" },
+];
+const PERM_DEFAULT_USER = { dashboard: true, agenda: true, clientes: true, funil: true, relatorios: true, configuracoes: false, modulos: false };
+/* Áreas só de administrador (nunca aparecem na lista de abas liberáveis). */
+const ADMIN_VIEWS = ["usuarios", "atividades"];
+const MAIN_VIEWS = ["dashboard", "agenda", "clientes", "funil", "relatorios"];
+function permDefaults(all) { const o = {}; PERM_TABS.forEach((t) => { o[t.key] = all ? true : !!PERM_DEFAULT_USER[t.key]; }); return o; }
+function permTabLabel(key) { const t = PERM_TABS.find((x) => x.key === key); return t ? t.label : key; }
+function isAdmin(user) { return !!user && user.perfil === "admin"; }
+/* O usuário pode ver esta aba/área? Administrador vê tudo; "usuarios" e "atividades" são só de administrador. */
+function userCan(user, key) {
+  if (!user) return false;
+  if (isAdmin(user)) return true;
+  if (ADMIN_VIEWS.includes(key)) return false;
+  return !!(user.abas && user.abas[key]);
+}
+function userAllowedViews(user) { return MAIN_VIEWS.concat(ADMIN_VIEWS).filter((v) => userCan(user, v)); }
+function firstAllowedView(user) { const v = userAllowedViews(user); return v.length ? v[0] : null; }
+/* Resumo das abas liberadas, para listas: ["Painel", "Agenda", ...]. */
+function userTabLabels(user) {
+  if (!user) return [];
+  if (isAdmin(user)) return PERM_TABS.map((t) => t.label);
+  return PERM_TABS.filter((t) => user.abas && user.abas[t.key]).map((t) => t.label);
+}
+
+/* --------------------------------- senha ---------------------------------- */
+const authNormalizeLogin = (s) => String(s || "").trim().toLowerCase();
+function authValidatePassword(p) {
+  const s = String(p || "");
+  if (s.length < 6) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (s.length > 72) return "A senha é longa demais (máximo 72 caracteres).";
+  return "";
+}
+/* Texto → bytes UTF-8 (sem TextEncoder, para rodar também nos testes em Node). */
+function authUtf8Bytes(str) {
+  const out = [];
+  for (const ch of String(str)) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+    else if (cp < 0x10000) out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    else out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+  }
+  return out;
+}
+/* SHA-256 em JavaScript puro (sem bibliotecas). Devolve 64 caracteres hexadecimais. */
+const AUTH_SHA_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+function authSha256Hex(message) {
+  const bytes = authUtf8Bytes(message);
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const hi = Math.floor(bitLen / 0x100000000), lo = bitLen >>> 0;
+  bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255, (lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+  let H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const W = new Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let i = 0; i < 16; i++) W[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(W[i - 15], 7) ^ rotr(W[i - 15], 18) ^ (W[i - 15] >>> 3);
+      const s1 = rotr(W[i - 2], 17) ^ rotr(W[i - 2], 19) ^ (W[i - 2] >>> 10);
+      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) | 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + AUTH_SHA_K[i] + W[i]) | 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H = [(H[0] + a) | 0, (H[1] + b) | 0, (H[2] + c) | 0, (H[3] + d) | 0, (H[4] + e) | 0, (H[5] + f) | 0, (H[6] + g) | 0, (H[7] + h) | 0];
+  }
+  return H.map((x) => (x >>> 0).toString(16).padStart(8, "0")).join("");
+}
+/* Sal aleatório (24 hex). Usa o gerador criptográfico do navegador quando existe. */
+function authNewSalt() {
+  try {
+    const a = new Uint8Array(12);
+    (window.crypto || crypto).getRandomValues(a);
+    return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) {
+    return (Math.random().toString(16).slice(2, 14) + Math.random().toString(16).slice(2, 14)).slice(0, 24);
+  }
+}
+/* Hash da senha com sal e várias rodadas (a senha em si nunca é guardada). */
+const AUTH_ROUNDS = 1500;
+function authHash(senha, salt) {
+  let h = authSha256Hex(String(salt || "") + ":" + String(senha == null ? "" : senha));
+  for (let i = 1; i < AUTH_ROUNDS; i++) h = authSha256Hex(h + String(salt || ""));
+  return h;
+}
+function authVerify(user, senha) { return !!user && !!user.senhaHash && authHash(senha, user.salt || "") === user.senhaHash; }
+/* Confere login + senha na lista de usuários: { ok, user, erro: "login" | "inativo" | "senha" }. */
+function authCheck(users, login, senha) {
+  const l = authNormalizeLogin(login);
+  const u = (users || []).find((x) => x && authNormalizeLogin(x.login) === l) || null;
+  if (!u) return { ok: false, erro: "login", user: null };
+  if (!u.ativo) return { ok: false, erro: "inativo", user: u };
+  if (!authVerify(u, senha)) return { ok: false, erro: "senha", user: u };
+  return { ok: true, user: u, erro: "" };
+}
+/* Login já usado por outro usuário? */
+function authLoginTaken(users, login, excludeId) {
+  const l = authNormalizeLogin(login);
+  return !!l && (users || []).some((u) => u && u.id !== excludeId && authNormalizeLogin(u.login) === l);
+}
+/* Administradores ativos (para não deixar o CRM sem nenhum). */
+function activeAdmins(users) { return (users || []).filter((u) => u && u.ativo && u.perfil === "admin"); }
+
+/* ------------------------------ atividades -------------------------------- */
+const ACTIVITY_TYPES = [
+  { key: "acesso",   label: "Acesso",         icon: "UserCheck",  color: "#64748B", soft: "#F1F5F9", text: "#475569" },
+  { key: "cliente",  label: "Clientes",       icon: "Users",      color: "#3152E4", soft: "#EFF4FF", text: "#2541B8" },
+  { key: "etapa",    label: "Etapas",         icon: "Kanban",     color: "#D97706", soft: "#FEF3C7", text: "#92400E" },
+  { key: "tarefa",   label: "Tarefas",        icon: "ListChecks", color: "#047857", soft: "#E6F6EE", text: "#065F46" },
+  { key: "contato",  label: "Contatos",       icon: "Phone",      color: "#0E7490", soft: "#ECFEFF", text: "#155E75" },
+  { key: "nota",     label: "Notas",          icon: "Note",       color: "#7C3AED", soft: "#F5F3FF", text: "#5B21B6" },
+  { key: "proposta", label: "Propostas",      icon: "FileText",   color: "#BE185D", soft: "#FDF2F8", text: "#9D174D" },
+  { key: "dados",    label: "Backup e dados", icon: "Save",       color: "#B45309", soft: "#FFF7ED", text: "#9A3412" },
+  { key: "config",   label: "Configurações",  icon: "Cog",        color: "#475569", soft: "#F1F5F9", text: "#334155" },
+  { key: "usuarios", label: "Usuários",       icon: "Shield",     color: "#4338CA", soft: "#EEF2FF", text: "#3730A3" },
+];
+function activityTypeMeta(key) { return ACTIVITY_TYPES.find((t) => t.key === key) || ACTIVITY_TYPES[1]; }
+/* Tipo da linha do tempo do cliente (HISTORY_TIPOS) → tipo de atividade. */
+const ACTIVITY_FROM_HISTORY = { cadastro: "cliente", etapa: "etapa", tarefa: "tarefa", nota: "nota", contato: "contato", mensagem: "contato", proposta: "proposta", item: "cliente", dados: "cliente" };
+const ACTIVITY_MAX = 2000;
+const ACTIVITY_DEDUPE_MS = 120000;
+function activityEntry(user, tipo, texto, ref) {
+  const r = ref && typeof ref === "object" ? ref : {};
+  return {
+    id: uid(), at: nowISO(), userId: user ? String(user.id || "") : "", userNome: user ? String(user.nome || "") : "",
+    tipo: activityTypeMeta(tipo).key, texto: String(texto == null ? "" : texto).slice(0, 240),
+    modId: String(r.modId || ""), clientId: String(r.clientId || ""), clientNome: String(r.clientNome || ""),
+  };
+}
+/* Nova lista com a entrada na frente. Repetição igual (mesmo usuário, tipo, texto e cliente) em menos de 2 min é ignorada. */
+function appendActivity(list, entry) {
+  const L = Array.isArray(list) ? list : [];
+  const last = L[0];
+  if (last && last.userId === entry.userId && last.tipo === entry.tipo && last.texto === entry.texto && last.clientId === entry.clientId
+      && Math.abs(new Date(entry.at).getTime() - new Date(last.at).getTime()) < ACTIVITY_DEDUPE_MS) return L;
+  return [entry, ...L].slice(0, ACTIVITY_MAX);
+}
+/* Entradas dos últimos N dias (0 = todas). */
+function activityInDays(list, days) {
+  const L = Array.isArray(list) ? list : [];
+  if (!days) return L;
+  const since = Date.now() - days * 864e5;
+  return L.filter((e) => new Date(e.at).getTime() >= since);
+}
+/* Resumo por usuário: eventos, último evento e contagem por tipo. */
+function activitySummary(list, users) {
+  const by = {};
+  (users || []).forEach((u) => { by[u.id] = { userId: u.id, nome: u.nome, ativo: u.ativo !== false, perfil: u.perfil, ultimoAcesso: u.ultimoAcesso || "", total: 0, ultimo: "", porTipo: {} }; });
+  (list || []).forEach((e) => {
+    const k = e.userId || "";
+    if (!by[k]) by[k] = { userId: k, nome: e.userNome || "Usuário removido", ativo: false, perfil: "", ultimoAcesso: "", total: 0, ultimo: "", porTipo: {}, removido: true };
+    const s = by[k];
+    s.total += 1;
+    if (!s.ultimo || e.at > s.ultimo) s.ultimo = e.at;
+    s.porTipo[e.tipo] = (s.porTipo[e.tipo] || 0) + 1;
+  });
+  return Object.values(by).sort((a, b) => (b.ultimo || "").localeCompare(a.ultimo || "") || a.nome.localeCompare(b.nome));
+}
+function activityToCSV(list) {
+  const head = ["Quando", "Usuário", "Tipo", "O que aconteceu", "Cliente", "Módulo"];
+  const rows = (list || []).map((e) => [fmtDateTime(e.at), e.userNome, activityTypeMeta(e.tipo).label, e.texto, e.clientNome, e.modId]);
+  return "﻿" + [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
+}
+
 /* >>> src/02-icons.jsx */
 /* --------------------------- Ícones (SVG inline) -------------------------- */
 function Icon({ size = 20, stroke = "currentColor", fill = "none", children, className = "", paths, d }) {
@@ -620,6 +823,12 @@ const I = {
   ClipboardCheck: (p) => <Icon {...p}><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></Icon>,
   Repeat: (p) => <Icon {...p}><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></Icon>,
   MapPin: (p) => <Icon {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></Icon>,
+  /* v5: acesso e usuários */
+  EyeOff: (p) => <Icon {...p}><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></Icon>,
+  LogOut: (p) => <Icon {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></Icon>,
+  LogIn: (p) => <Icon {...p}><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></Icon>,
+  Lock: (p) => <Icon {...p}><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></Icon>,
+  Key: (p) => <Icon {...p}><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></Icon>,
 };
 const ICON_CHOICES = ["Grid", "Gift", "Card", "Wallet", "Briefcase", "Target", "Building", "Percent"];
 
@@ -1039,18 +1248,28 @@ function saveModules(modules) {
 function clearSavedModules() { try { window.localStorage.removeItem(STORAGE_KEY); } catch (e) {} }
 
 /* ------------------------------- BACKUP ----------------------------------- */
-function serializeBackup(modules, settings) {
-  return JSON.stringify({ app: "prospera-crm", version: 4, exportedAt: nowISO(), modules, settings }, null, 2);
+/* v5: o backup leva também os usuários (com o hash das senhas) e o registro de atividades, quando informados em `extra`. */
+function serializeBackup(modules, settings, extra) {
+  const ex = extra && typeof extra === "object" ? extra : {};
+  const payload = { app: "prospera-crm", version: 5, exportedAt: nowISO(), modules, settings };
+  if (Array.isArray(ex.users)) payload.users = ex.users;
+  if (Array.isArray(ex.activity)) payload.activity = ex.activity;
+  return JSON.stringify(payload, null, 2);
 }
-/* Aceita o backup antigo (array de módulos, v2) e o novo (objeto com modules + settings, v3). */
+/* Aceita o backup antigo (array de módulos, v2), o v3/v4 (modules + settings) e o v5 (+ users + activity). */
 function parseBackup(parsed) {
   const validMods = (arr) => Array.isArray(arr) && arr.length > 0 && arr.every((m) => m && typeof m === "object" && m.id && m.nome);
   if (Array.isArray(parsed)) {
     if (!validMods(parsed)) throw new Error("formato");
-    return { modules: parsed.map(hydrateModule), settings: null };
+    return { modules: parsed.map(hydrateModule), settings: null, users: null, activity: null };
   }
   if (parsed && typeof parsed === "object" && validMods(parsed.modules)) {
-    return { modules: parsed.modules.map(hydrateModule), settings: parsed.settings && typeof parsed.settings === "object" ? hydrateSettings(parsed.settings) : null };
+    return {
+      modules: parsed.modules.map(hydrateModule),
+      settings: parsed.settings && typeof parsed.settings === "object" ? hydrateSettings(parsed.settings) : null,
+      users: Array.isArray(parsed.users) ? hydrateUsers(parsed.users) : null,
+      activity: Array.isArray(parsed.activity) ? hydrateActivity(parsed.activity) : null,
+    };
   }
   throw new Error("formato");
 }
@@ -1228,6 +1447,91 @@ function stageDurations(c) {
     const days = isNaN(ms) ? 0 : Math.max(0, Math.round((ms / 864e5) * 10) / 10);
     return { status: e.status, from, to, days };
   });
+}
+
+/* ============================ USUÁRIOS E ACESSO (v5) ======================
+   Usuários (com hash da senha), sessão (quem está logado neste navegador) e
+   registro de atividades ficam em chaves próprias. Nada disso sai do navegador.
+============================================================================ */
+const USERS_KEY = "prospera_crm_users_v5";
+const SESSION_KEY = "prospera_crm_session_v5";
+const ACTIVITY_KEY = "prospera_crm_activity_v5";
+
+/* Garante que um usuário salvo (ou parcial) tenha todos os campos válidos. */
+function hydrateUser(u) {
+  const src = u && typeof u === "object" ? u : {};
+  const perfil = src.perfil === "admin" ? "admin" : "usuario";
+  const srcAbas = src.abas && typeof src.abas === "object" ? src.abas : null;
+  const abas = {};
+  PERM_TABS.forEach((t) => { abas[t.key] = srcAbas ? !!srcAbas[t.key] : !!PERM_DEFAULT_USER[t.key]; });
+  return {
+    id: storageStr(src.id) || uid(),
+    nome: storageStr(src.nome).trim(),
+    login: authNormalizeLogin(src.login),
+    senhaHash: storageStr(src.senhaHash),
+    salt: storageStr(src.salt),
+    perfil,
+    ativo: src.ativo !== false,
+    vendedorId: storageStr(src.vendedorId),
+    abas,
+    criadoEm: storageStr(src.criadoEm) || nowISO(),
+    ultimoAcesso: storageStr(src.ultimoAcesso),
+    trocarSenha: !!src.trocarSenha,
+  };
+}
+/* Lista limpa: sem login vazio e sem login repetido (fica o primeiro). */
+function hydrateUsers(list) {
+  const seen = new Set();
+  return storageList(list, []).map(hydrateUser).filter((u) => {
+    if (!u.login || seen.has(u.login)) return false;
+    seen.add(u.login);
+    return true;
+  });
+}
+function loadUsers() {
+  let raw = null;
+  try { raw = window.localStorage.getItem(USERS_KEY); } catch (e) { console.warn("Sem acesso ao localStorage; sem usuários salvos.", e); return []; }
+  if (!raw) return [];
+  try { return hydrateUsers(JSON.parse(raw)); }
+  catch (e) { storageKeepCorrupted("users", USERS_KEY, raw, e); return []; }
+}
+function saveUsers(users) {
+  try { window.localStorage.setItem(USERS_KEY, JSON.stringify(users)); return true; }
+  catch (e) { console.warn("Não foi possível salvar os usuários.", e); return false; }
+}
+/* Sessão: { userId, at } ou null. */
+function loadSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    return p && typeof p === "object" && p.userId ? { userId: String(p.userId), at: storageStr(p.at) } : null;
+  } catch (e) { return null; }
+}
+function saveSession(s) {
+  try {
+    if (!s) window.localStorage.removeItem(SESSION_KEY);
+    else window.localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) { return false; }
+}
+function hydrateActivity(list) {
+  return storageList(list, []).filter((e) => e.at && e.texto).map((e) => ({
+    id: storageStr(e.id) || uid(), at: storageStr(e.at), userId: storageStr(e.userId), userNome: storageStr(e.userNome),
+    tipo: activityTypeMeta(e.tipo).key, texto: storageStr(e.texto).slice(0, 240),
+    modId: storageStr(e.modId), clientId: storageStr(e.clientId), clientNome: storageStr(e.clientNome),
+  })).slice(0, ACTIVITY_MAX);
+}
+function loadActivity() {
+  let raw = null;
+  try { raw = window.localStorage.getItem(ACTIVITY_KEY); } catch (e) { return []; }
+  if (!raw) return [];
+  try { return hydrateActivity(JSON.parse(raw)); }
+  catch (e) { storageKeepCorrupted("activity", ACTIVITY_KEY, raw, e); return []; }
+}
+function saveActivity(list) {
+  try { window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(list)); return true; }
+  catch (e) { console.warn("Não foi possível salvar o registro de atividades.", e); return false; }
 }
 
 /* >>> src/05-ui.jsx */
@@ -1649,8 +1953,17 @@ function ProsperaCRM() {
   const [activeModId, setActiveModId] = useState(() => (modules[0] || initialModules[0]).id);
   const [savedAt, setSavedAt] = useState(null);
   const [settings, setSettings] = useState(loadSettings);
+  const [users, setUsers] = useState(loadUsers);
+  const [session, setSession] = useState(loadSession);
+  const [activity, setActivity] = useState(loadActivity);
+  const [accountOpen, setAccountOpen] = useState(false);   // false | true (trocar senha) | "forcada" (admin redefiniu)
   const [saveError, setSaveError] = useState(false);
-  const saveFail = useRef({ modules: false, settings: false });
+  const saveFail = useRef({ modules: false, settings: false, users: false });
+  /* Usuário logado (sessão + lista). Null = tela de login. A ref permite registrar atividades de dentro de callbacks. */
+  const currentUser = useMemo(() => users.find((u) => u.id === (session && session.userId) && u.ativo) || null, [users, session]);
+  const currentUserRef = useRef(null);
+  currentUserRef.current = currentUser;
+  const can = (key) => userCan(currentUser, key);
 
   /* A tela atual vai na URL (#painel, #clientes, #funil, #agenda, #relatorios) para poder favoritar ou compartilhar o link. */
   const [view, setView] = useState(() => { const h = (window.location.hash || "").replace("#", ""); return VIEW_HASH[h] || "dashboard"; });
@@ -1700,17 +2013,20 @@ function ProsperaCRM() {
   }, []);
   const dismissToast = (id) => setToasts((ts) => ts.filter((x) => x.id !== id));
   const askConfirm = (opts) => setConfirmState(opts);
-  const openSettings = useCallback((tab) => { setSettingsTab(typeof tab === "string" ? tab : null); setSettingsOpen(true); setSidebarOpen(false); }, []);
+  const openSettings = useCallback((tab) => {
+    if (!userCan(currentUserRef.current, "configuracoes")) { notify({ kind: "warning", title: "Área não liberada", message: "Peça a um administrador para liberar Configurações e backup para você." }); return; }
+    setSettingsTab(typeof tab === "string" ? tab : null); setSettingsOpen(true); setSidebarOpen(false);
+  }, [notify]);
   const plural = (n, um, varios) => n + " " + (n === 1 ? um : varios);
 
   /* ---- salvamento (com aviso quando o navegador recusa gravar) ---- */
   const reportSave = useCallback((kind, ok) => {
     const f = saveFail.current;
     if (ok) {
-      if (f[kind]) { f[kind] = false; setSaveError(f.modules || f.settings); }
+      if (f[kind]) { f[kind] = false; setSaveError(!!(f.modules || f.settings || f.users)); }
       return;
     }
-    const wasFailing = f.modules || f.settings;
+    const wasFailing = f.modules || f.settings || f.users;
     f[kind] = true;
     setSaveError(true);
     if (!wasFailing) {
@@ -1721,6 +2037,16 @@ function ProsperaCRM() {
   }, [notify, openSettings]);
   useEffect(() => { const ok = saveModules(modules); if (ok) setSavedAt(Date.now()); reportSave("modules", ok); }, [modules]);
   useEffect(() => { reportSave("settings", saveSettings(settings)); }, [settings]);
+  useEffect(() => { reportSave("users", saveUsers(users)); }, [users]);
+  useEffect(() => { saveActivity(activity); }, [activity]);
+  useEffect(() => { saveSession(session); }, [session]);
+
+  /* ---- registro de atividades (v5): quem fez, o quê e em qual cliente. Nunca quebra a ação principal. ---- */
+  const act = useCallback((tipo, texto, ref) => {
+    const u = currentUserRef.current;
+    if (!u) return;
+    try { setActivity((list) => appendActivity(list, activityEntry(u, tipo, texto, ref))); } catch (e) { console.warn("Falha ao registrar atividade", e); }
+  }, []);
   const saveSettingsNow = (next) => setSettings(next);
 
   /* ---- primeiro commit: tira a tela de carregamento e avisa se algum dado salvo estava ilegível ---- */
@@ -1743,6 +2069,15 @@ function ProsperaCRM() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+  /* ---- senha redefinida pelo administrador: pede a troca assim que a pessoa entra (ou reabre o CRM já logada) ---- */
+  useEffect(() => {
+    if (currentUser && currentUser.trocarSenha) setAccountOpen("forcada");
+  }, [currentUser && currentUser.id, currentUser && currentUser.trocarSenha]);
+  /* ---- permissões: se a tela atual não está liberada para o usuário, vai para a primeira liberada ---- */
+  useEffect(() => {
+    if (!currentUser) return;
+    if (!userCan(currentUser, view)) { const f = firstAllowedView(currentUser); if (f) setView(f); }
+  }, [currentUser, view]);
 
   /* ---- mutações ---- */
   const setModuleClients = (updater, modId = mod.id) =>
@@ -1758,12 +2093,21 @@ function ProsperaCRM() {
       history: entry ? [appHistoryEntry(entry.text, entry.extra), ...(c.history || [])].slice(0, APP_HISTORY_MAX) : (c.history || []),
     };
   };
-  const updateClientIn = (modId, id, fn, log, extra) =>
+  /* Registra em "Atividades" uma ação sobre um cliente (mesmo texto da linha do tempo da ficha). */
+  const actClient = (modId, clientId, texto, histTipo, client) => {
+    const m = modules.find((x) => x.id === modId);
+    const c = client || (m ? m.clients.find((x) => x.id === clientId) : null);
+    act(ACTIVITY_FROM_HISTORY[histTipo || appHistoryTipo(texto)] || "cliente", texto, { modId, clientId, clientNome: c ? c.nome : "" });
+  };
+  const updateClientIn = (modId, id, fn, log, extra) => {
+    const logText = typeof log === "string" ? log : (log && typeof log === "object" && log.text) ? log.text : "";
+    if (logText) actClient(modId, id, logText, (extra && extra.tipo) || (log && log.extra && log.extra.tipo) || "");
     setModules((ms) => ms.map((m) => (m.id !== modId ? m : { ...m, clients: m.clients.map((c) => {
       if (c.id !== id) return c;
       const next = fn(c);
       return touch(next, typeof log === "function" ? log(c, next) : log, extra);
     }) })));
+  };
   const updateClient = (id, fn, log, extra) => updateClientIn(mod.id, id, fn, log, extra);
   const logClientIn = (modId, id, text, extra) => updateClientIn(modId, id, (c) => c, text, extra);
   const logClient = (id, text, extra) => logClientIn(mod.id, id, text, extra);
@@ -1794,9 +2138,12 @@ function ProsperaCRM() {
       ];
       return { ...next, updatedAt: at, history: [...entries, ...(x.history || [])].slice(0, APP_HISTORY_MAX) };
     }), modId);
+    const motivoTxt = status === "perdido" && extra.motivoPerda ? " (motivo: " + (motivoLabel(settings, extra.motivoPerda) || extra.motivoPerda) + ")" : "";
+    actClient(modId, id, "Etapa alterada para " + label + motivoTxt, "etapa", before);
     const n = preview.created.length;
     const undo = () => {
       setModuleClients((cs) => cs.map((x) => (x.id === id ? { ...snapshot, updatedAt: nowISO() } : x)), modId);
+      actClient(modId, id, "Mudança de etapa desfeita: voltou para " + statusMeta(snapshot.status).label, "etapa", snapshot);
       notify({ title: "Movimento desfeito", message: snapshot.nome + " voltou para " + statusMeta(snapshot.status).label, kind: "info", duration: 2500 });
     };
     notify({ title: before.nome + " movido para " + label, kind: "info", duration: 6000,
@@ -1860,6 +2207,7 @@ function ProsperaCRM() {
       appHistoryEntry("Cliente cadastrado", { tipo: "cadastro" }),
     ];
     setModuleClients((cs) => [c, ...cs]);
+    actClient(mod.id, c.id, "Cliente cadastrado", "cadastro", c);
     const n = r.created.length;
     notify({ title: "Cliente cadastrado", message: (n ? plural(n, "tarefa criada automaticamente", "tarefas criadas automaticamente") + ". " : "") + "Agora adicione os " + mod.itemLabelPlural.toLowerCase() + " dele." });
     setFormOpen(false); setEditing(null); setRequireFor(null);
@@ -1886,12 +2234,13 @@ function ProsperaCRM() {
       confirmLabel: "Excluir cliente", danger: true,
       onConfirm: () => {
         setModuleClients((cs) => cs.filter((x) => x.id !== id), modId);
+        actClient(modId, id, "Cliente excluído", "cadastro", c);
         if (openId === id) setOpenId(null);
         if (proposalFor === id) setProposalFor(null);
         if (nextStepFor && nextStepFor.clientId === id) setNextStepFor(null);
         if (contactFor && contactFor.clientId === id) setContactFor(null);
         notify({ title: "Cliente excluído", message: c.nome, kind: "info", duration: 7000,
-          action: { label: "Desfazer", onClick: () => { setModuleClients((cs) => { const n = [...cs]; n.splice(Math.min(idx, n.length), 0, c); return n; }, modId); } } });
+          action: { label: "Desfazer", onClick: () => { setModuleClients((cs) => { const n = [...cs]; n.splice(Math.min(idx, n.length), 0, c); return n; }, modId); actClient(modId, id, "Exclusão desfeita", "cadastro", c); } } });
       },
     });
   };
@@ -1915,6 +2264,10 @@ function ProsperaCRM() {
   };
   const patchTaskIn = (modId, clientId, taskId, patch) => {
     const p = patch && typeof patch === "object" ? patch : {};
+    const mm = modules.find((x) => x.id === modId);
+    const cc = mm ? mm.clients.find((x) => x.id === clientId) : null;
+    const tt = cc ? (cc.tasks || []).find((x) => x.id === taskId) : null;
+    if (tt && p.data !== undefined && p.data !== tt.data) actClient(modId, clientId, p.data ? "Tarefa adiada para " + appShortDate(p.data) + ": " + tt.titulo : "Tarefa sem data: " + tt.titulo, "tarefa", cc);
     updateClientIn(modId, clientId, (c) => ({ ...c, tasks: (c.tasks || []).map((t) => (t.id === taskId ? { ...t, ...p } : t)) }),
       (c) => {
         const t = (c.tasks || []).find((x) => x.id === taskId);
@@ -1956,7 +2309,8 @@ function ProsperaCRM() {
   /* ---- módulos ---- */
   const addModule = (newMod) => {
     setModules((ms) => [...ms, { ...newMod, clients: [] }]);
-    setActiveModId(newMod.id); setModuleManagerOpen(false); setView("dashboard");
+    act("config", "Módulo criado: " + newMod.nome);
+    setActiveModId(newMod.id); setModuleManagerOpen(false); setView(can("dashboard") ? "dashboard" : firstAllowedView(currentUser) || "dashboard");
     notify({ title: "Módulo criado", message: newMod.nome });
   };
   const deleteModule = (id) => {
@@ -1972,6 +2326,7 @@ function ProsperaCRM() {
           if (id === activeModId) setActiveModId(left[0].id);
           return left;
         });
+        act("config", "Módulo excluído: " + (m ? m.nome : "") + " (" + (m ? m.clients.length : 0) + " cliente(s))");
         notify({ title: "Módulo excluído", kind: "info" });
       },
     });
@@ -1995,6 +2350,7 @@ function ProsperaCRM() {
       clearSavedModules(); clearSavedSettings();
       setModules(initialModules); setActiveModId(initialModules[0].id); setSettings(freshSettings());
       setOpenId(null); setSettingsOpen(false);
+      act("dados", "Dados de exemplo restaurados (clientes e configurações apagados)");
       notify({ title: "Dados de exemplo restaurados", kind: "info" });
     },
   });
@@ -2003,15 +2359,31 @@ function ProsperaCRM() {
     const mods = (data.modules || []).map(hydrateModule);
     if (!mods.length) { notify({ title: "Arquivo sem módulos", message: "Nada para importar.", kind: "error" }); return; }
     const nextSettings = data.settings ? hydrateSettings(data.settings) : null;
+    const nextUsers = Array.isArray(data.users) && data.users.length ? hydrateUsers(data.users) : null;
+    const nextActivity = Array.isArray(data.activity) ? hydrateActivity(data.activity) : null;
+    const nClients = mods.reduce((s, m) => s + m.clients.length, 0);
     askConfirm({
       title: "Importar backup?",
-      message: "Os dados atuais serão substituídos por " + mods.length + " módulo(s) e " + mods.reduce((s, m) => s + m.clients.length, 0) + " cliente(s) do arquivo" + (nextSettings ? ", incluindo as configurações" : "") + ".",
+      message: "Os dados atuais serão substituídos por " + mods.length + " módulo(s) e " + nClients + " cliente(s) do arquivo" + (nextSettings ? ", incluindo as configurações" : "") + (nextUsers ? " e " + nextUsers.length + " usuário(s)" : "") + ".",
       confirmLabel: "Importar", danger: true,
       onConfirm: () => {
         setModules(mods); setActiveModId(mods[0].id); setOpenId(null);
         if (nextSettings) setSettings(nextSettings);
+        if (nextUsers) {
+          /* Quem está importando continua com acesso: pelo mesmo login do arquivo ou mantendo o próprio usuário de agora. */
+          let list = nextUsers;
+          const me = currentUserRef.current;
+          if (me) {
+            const same = list.find((u) => u.login === me.login);
+            if (!same) list = [...list, me];
+            setSession({ userId: (same || me).id, at: nowISO() });
+          }
+          setUsers(list);
+        }
+        if (nextActivity) setActivity(nextActivity);
         setSettingsOpen(false);
-        notify({ title: "Backup importado", message: nextSettings ? "Clientes e configurações restaurados." : "Clientes restaurados." });
+        act("dados", "Backup importado: " + mods.length + " módulo(s), " + nClients + " cliente(s)" + (nextUsers ? ", " + nextUsers.length + " usuário(s)" : ""));
+        notify({ title: "Backup importado", message: (nextSettings ? "Clientes e configurações restaurados." : "Clientes restaurados.") + (nextUsers ? " Usuários restaurados." : "") });
       },
     });
   };
@@ -2033,6 +2405,7 @@ function ProsperaCRM() {
       confirmLabel: "Remover exemplos", danger: true,
       onConfirm: () => {
         setModules((ms) => removeDemoClients(ms));
+        act("dados", "Exemplos removidos: " + plural(n, "cliente de exemplo", "clientes de exemplo"));
         if (openClient && openClient.demo) setOpenId(null);
         setSettingsOpen(false);
         notify({ title: "Exemplos removidos", message: plural(n, "cliente de exemplo apagado", "clientes de exemplo apagados"), kind: "info" });
@@ -2057,10 +2430,119 @@ function ProsperaCRM() {
     });
     if (!list.length) { notify({ title: "Nenhum cliente para importar", kind: "warning" }); return; }
     setModuleClients((cs) => [...list, ...cs], m.id);
+    act("dados", "Planilha importada: " + plural(list.length, "cliente", "clientes") + " em " + m.nome);
     if (m.id !== activeModId) setActiveModId(m.id);
     setSettingsOpen(false); setOpenId(null);
     setView("clientes");
     notify({ title: plural(list.length, "cliente importado", "clientes importados"), message: "Adicionados em " + m.nome + "." });
+  };
+
+  /* ---- acesso e usuários (v5) ---- */
+  /* Vendedor na equipe para um usuário: "__novo__" cria um com o mesmo nome; id existente é mantido; "" = nenhum. */
+  const resolveVendedor = (s, nome, vendedorId) => {
+    if (vendedorId === "__novo__") {
+      const id = settingsNewId(nome, (s.vendedores || []).map((v) => v.id));
+      return { settings: { ...s, vendedores: [...(s.vendedores || []), { id, nome, metaMensal: 0 }] }, vendedorId: id };
+    }
+    return { settings: s, vendedorId: isKnownVendedor(s, vendedorId) ? vendedorId : "" };
+  };
+  /* Entra como o usuário: sessão, "quem sou eu" = vendedor vinculado, registro e, se preciso, troca de senha obrigatória. */
+  const enterAs = (user) => {
+    const at = nowISO();
+    setUsers((us) => us.map((u) => (u.id === user.id ? { ...u, ultimoAcesso: at } : u)));
+    setSession({ userId: user.id, at });
+    setSettings((s) => ({ ...s, usuarioAtual: isKnownVendedor(s, user.vendedorId) ? user.vendedorId : "" }));
+    currentUserRef.current = user;
+    act("acesso", "Entrou no CRM");
+    if (!userCan(user, view)) setView(firstAllowedView(user) || "dashboard");
+  };
+  const doSetup = ({ nome, login, senha, vendedorId }) => {
+    const r = resolveVendedor(settings, nome, vendedorId);
+    const salt = authNewSalt();
+    const u = hydrateUser({ id: uid(), nome, login, salt, senhaHash: authHash(senha, salt), perfil: "admin", ativo: true, vendedorId: r.vendedorId, abas: permDefaults(true), criadoEm: nowISO() });
+    setSettings({ ...r.settings, usuarioAtual: r.vendedorId });
+    setUsers([u]);
+    currentUserRef.current = u;
+    act("usuarios", "Primeiro administrador criado: " + nome);
+    enterAs(u);
+    notify({ title: "Bem-vindo, " + nome.split(" ")[0] + "!", message: "Você é o administrador. Cadastre o time em Usuários e escolha o que cada um vê.", duration: 7000 });
+  };
+  const doLogout = () => {
+    act("acesso", "Saiu do CRM");
+    setSession(null); setAccountOpen(false); setSettingsOpen(false); setModuleManagerOpen(false);
+    setOpenId(null); setFormOpen(false); setEditing(null); setSidebarOpen(false); setConfirmState(null);
+    setGate(null); setLoss(null); setProposalFor(null); setNextStepFor(null); setContactFor(null);
+  };
+  const changeOwnPassword = (nova) => {
+    const me = currentUser;
+    if (!me) return;
+    const salt = authNewSalt();
+    setUsers((us) => us.map((u) => (u.id === me.id ? { ...u, salt, senhaHash: authHash(nova, salt), trocarSenha: false } : u)));
+    setAccountOpen(false);
+    act("acesso", "Trocou a própria senha");
+    notify({ title: "Senha alterada", message: "Use a nova senha no próximo acesso." });
+  };
+  const createUser = (data) => {
+    const r = resolveVendedor(settings, data.nome, data.vendedorId);
+    if (r.settings !== settings) setSettings(r.settings);
+    const salt = authNewSalt();
+    const u = hydrateUser({ id: uid(), nome: data.nome, login: data.login, salt, senhaHash: authHash(data.senha, salt), perfil: data.perfil, ativo: true,
+      vendedorId: r.vendedorId, abas: data.abas, criadoEm: nowISO(), trocarSenha: !!data.trocarSenha });
+    setUsers((us) => [...us, u]);
+    act("usuarios", "Usuário criado: " + u.nome + " (" + perfilLabel(u.perfil) + ")");
+    notify({ title: "Usuário criado", message: u.nome + " já pode entrar com o login " + u.login + "." });
+  };
+  const updateUser = (id, data) => {
+    const cur = users.find((u) => u.id === id);
+    if (!cur) return;
+    if (cur.perfil === "admin" && cur.ativo && data.perfil !== "admin" && activeAdmins(users).filter((u) => u.id !== id).length === 0) {
+      notify({ kind: "error", title: "O CRM precisa de ao menos um administrador ativo" }); return;
+    }
+    const r = resolveVendedor(settings, data.nome, data.vendedorId);
+    if (r.settings !== settings) setSettings(r.settings);
+    const next = hydrateUser({ ...cur, nome: data.nome, login: data.login, perfil: data.perfil, vendedorId: r.vendedorId, abas: data.abas });
+    setUsers((us) => us.map((u) => (u.id === id ? next : u)));
+    if (currentUser && currentUser.id === id) setSettings((s) => ({ ...s, usuarioAtual: isKnownVendedor(s, next.vendedorId) ? next.vendedorId : "" }));
+    act("usuarios", "Usuário editado: " + next.nome + " (" + perfilLabel(next.perfil) + (isAdmin(next) ? "" : " · abas: " + (userTabLabels(next).join(", ") || "nenhuma")) + ")");
+    notify({ title: "Usuário atualizado", message: next.nome });
+  };
+  const resetUserPassword = (id, senha) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    const self = !!currentUser && u.id === currentUser.id;
+    const salt = authNewSalt();
+    setUsers((us) => us.map((x) => (x.id === id ? { ...x, salt, senhaHash: authHash(senha, salt), trocarSenha: !self } : x)));
+    act("usuarios", self ? "Redefiniu a própria senha" : "Senha redefinida: " + u.nome);
+    notify({ title: "Senha redefinida", message: self ? "Sua senha foi alterada." : u.nome + " deve trocar a senha no próximo acesso." });
+  };
+  const toggleUserActive = (id) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    if (currentUser && u.id === currentUser.id) { notify({ kind: "warning", title: "Você não pode desativar o seu próprio usuário" }); return; }
+    if (u.ativo && isAdmin(u) && activeAdmins(users).length <= 1) { notify({ kind: "warning", title: "Único administrador ativo", message: "Torne outra pessoa administradora antes de desativar." }); return; }
+    const apply = () => {
+      setUsers((us) => us.map((x) => (x.id === id ? { ...x, ativo: !x.ativo } : x)));
+      act("usuarios", (u.ativo ? "Acesso desativado: " : "Acesso reativado: ") + u.nome);
+      notify({ title: u.ativo ? "Acesso desativado" : "Acesso reativado", message: u.nome, kind: "info" });
+    };
+    if (u.ativo) askConfirm({ title: "Desativar o acesso de " + u.nome + "?", message: "A pessoa não consegue mais entrar até ser reativada. Os clientes e os registros dela continuam.", confirmLabel: "Desativar", danger: true, onConfirm: apply });
+    else apply();
+  };
+  const deleteUser = (id) => {
+    const u = users.find((x) => x.id === id);
+    if (!u) return;
+    if (currentUser && u.id === currentUser.id) { notify({ kind: "warning", title: "Você não pode excluir o seu próprio usuário" }); return; }
+    if (isAdmin(u) && u.ativo && activeAdmins(users).length <= 1) { notify({ kind: "warning", title: "Único administrador ativo", message: "Torne outra pessoa administradora antes de excluir." }); return; }
+    askConfirm({
+      title: "Excluir o usuário " + u.nome + "?",
+      message: "O login deixa de existir. O vendedor na equipe, os clientes e o registro de atividades continuam. Se a pessoa pode voltar, prefira desativar.",
+      confirmLabel: "Excluir usuário", danger: true,
+      onConfirm: () => {
+        setUsers((us) => us.filter((x) => x.id !== id));
+        act("usuarios", "Usuário excluído: " + u.nome + " (" + u.login + ")");
+        notify({ title: "Usuário excluído", message: u.nome, kind: "info" });
+      },
+    });
   };
 
   /* ---- derivados ---- */
@@ -2099,14 +2581,16 @@ function ProsperaCRM() {
   const isListView = view === "clientes" || view === "funil";
 
   /* ---- teclado e scroll ---- */
-  const anyOverlay = !!(openId || formOpen || moduleManagerOpen || settingsOpen || confirmState || sidebarOpen || gate || loss || proposalFor || nextStepFor || contactFor);
+  const anyOverlay = !!(openId || formOpen || moduleManagerOpen || settingsOpen || confirmState || sidebarOpen || gate || loss || proposalFor || nextStepFor || contactFor || accountOpen);
   useEffect(() => { document.body.style.overflow = anyOverlay ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [anyOverlay]);
   useEffect(() => {
     const onKey = (e) => {
+      if (!currentUserRef.current) return;   // telas de login / primeiro acesso não usam os atalhos
       if (e.key === "Escape") {
         /* Esc enquanto digita só tira o foco do campo (não apaga nada nem fecha a janela). O segundo Esc fecha. */
         if (isTyping(e.target)) { e.target.blur(); return; }
         if (confirmState) setConfirmState(null);
+        else if (accountOpen) { if (accountOpen !== "forcada") setAccountOpen(false); }
         else if (nextStepFor) setNextStepFor(null);
         else if (contactFor) setContactFor(null);
         else if (gate) setGate(null);
@@ -2119,7 +2603,7 @@ function ProsperaCRM() {
         else if (sidebarOpen) setSidebarOpen(false);
       } else if (e.key === "/" && !isTyping(e.target) && !anyOverlay) {
         e.preventDefault();
-        if (!isListView) setView("clientes");
+        if (!isListView) { if (!userCan(currentUserRef.current, "clientes")) return; setView("clientes"); }
         setTimeout(() => searchRef.current && searchRef.current.focus(), 0);
       } else if ((e.key === "n" || e.key === "N") && !isTyping(e.target) && !anyOverlay && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
@@ -2128,11 +2612,17 @@ function ProsperaCRM() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [confirmState, nextStepFor, contactFor, gate, loss, proposalFor, formOpen, settingsOpen, moduleManagerOpen, openId, sidebarOpen, anyOverlay, view]);
+  }, [confirmState, accountOpen, nextStepFor, contactFor, gate, loss, proposalFor, formOpen, settingsOpen, moduleManagerOpen, openId, sidebarOpen, anyOverlay, view]);
 
   const openNew = () => { setEditing(null); setRequireFor(null); setFormOpen(true); setSidebarOpen(false); };
-  const goView = (v) => { setView(v); setSidebarOpen(false); };
-  const onSearch = (v) => { setQuery(v); if (v && !isListView) setView("clientes"); };
+  const goView = (v) => { if (!can(v)) return; setView(v); setSidebarOpen(false); };
+  const onSearch = (v) => { setQuery(v); if (v && !isListView && can("clientes")) setView("clientes"); };
+
+  /* ---- acesso: sem usuários → cria o primeiro administrador; sem sessão → login ---- */
+  if (users.length === 0) return <><SetupScreen vendedores={settings.vendedores || []} onCreate={doSetup} /><Toasts toasts={toasts} onDismiss={dismissToast} /></>;
+  if (!currentUser) return <><LoginScreen users={users} onLogin={enterAs} /><Toasts toasts={toasts} onDismiss={dismissToast} /></>;
+  const isAdminView = ADMIN_VIEWS.includes(view);
+  const noAccess = !firstAllowedView(currentUser);
 
   const titles = {
     dashboard: { title: "Painel", subtitle: greeting() + " · " + longToday() },
@@ -2140,12 +2630,15 @@ function ProsperaCRM() {
     funil: { title: "Funil de vendas", subtitle: "Arraste os cards ou use o botão Mover" },
     agenda: { title: "Agenda", subtitle: "Tarefas de todos os módulos" },
     relatorios: { title: "Relatórios", subtitle: "Conversão, tempos e desempenho do time" },
+    usuarios: { title: "Usuários", subtitle: "Quem acessa o CRM e o que cada pessoa vê" },
+    atividades: { title: "Atividades", subtitle: "Registro de tudo o que foi feito no CRM" },
   };
   const heading = titles[view] || titles.dashboard;
   const showFilters = isListView;
   const vendedores = (settings && settings.vendedores) || [];
 
-  const sidebarProps = { modules, mod, view, settings, saveError, onSwitch: switchModule, onView: goView, onManage: () => { setModuleManagerOpen(true); setSidebarOpen(false); }, onSettings: openSettings, savedAt };
+  const sidebarProps = { modules, mod, view, settings, saveError, onSwitch: switchModule, onView: goView, onManage: () => { if (!can("modulos")) return; setModuleManagerOpen(true); setSidebarOpen(false); }, onSettings: openSettings, savedAt,
+    user: currentUser, can, onLogout: doLogout, onAccount: () => setAccountOpen(true), usersCount: users.length };
 
   return (
     <div className="min-h-screen bg-canvas text-ink">
@@ -2167,7 +2660,12 @@ function ProsperaCRM() {
         <main className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div className="min-w-0">
-              {view === "agenda"
+              {isAdminView
+                ? <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                    <span className="flex h-4 w-4 items-center justify-center rounded bg-indigo-600 text-white"><I.Shield size={10} /></span>
+                    Administração
+                  </div>
+                : view === "agenda"
                 ? <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
                     <span className="flex h-4 w-4 items-center justify-center rounded bg-ink text-white"><I.Layers size={10} /></span>
                     Todos os módulos
@@ -2179,7 +2677,7 @@ function ProsperaCRM() {
               <h1 className="text-2xl font-bold tracking-tight text-ink">{heading.title}</h1>
               <p className="mt-0.5 text-sm text-slate-500">{heading.subtitle}</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            {!isAdminView && <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative min-w-[240px] flex-1 lg:w-80">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><I.Search size={17} /></span>
                 <input ref={searchRef} value={query} onChange={(e) => onSearch(e.target.value)} placeholder="Buscar cliente, empresa, e-mail…" className={inputCls + " pl-9 pr-9"} aria-label="Buscar clientes" />
@@ -2188,7 +2686,7 @@ function ProsperaCRM() {
                   : <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 sm:block"><Kbd>/</Kbd></span>}
               </div>
               <button onClick={openNew} className={btn.primary + " hidden lg:inline-flex"} title="Atalho: N"><I.Plus size={18} /> Novo cliente</button>
-            </div>
+            </div>}
           </div>
 
           {showFilters && (
@@ -2233,6 +2731,15 @@ function ProsperaCRM() {
               onMove={requestMove} onContactLink={contactLink} />
           )}
           {view === "relatorios" && <Reports mod={mod} clients={clients} allModules={allModules} settings={settings} onOpen={openClientHere} />}
+          {view === "usuarios" && can("usuarios") && (
+            <UsersView users={users} currentUser={currentUser} settings={settings}
+              onCreate={createUser} onUpdate={updateUser} onResetPassword={resetUserPassword} onToggleActive={toggleUserActive} onDelete={deleteUser}
+              onGoActivity={() => goView("atividades")} />
+          )}
+          {view === "atividades" && can("atividades") && (
+            <ActivityView activity={activity} users={users} modules={allModules} onOpenIn={openClientIn} notify={notify} />
+          )}
+          {noAccess && <NoAccessView onLogout={doLogout} />}
         </main>
       </div>
 
@@ -2263,7 +2770,12 @@ function ProsperaCRM() {
       {settingsOpen && (
         <SettingsModal modules={modules} mod={mod} settings={settings} onSaveSettings={saveSettingsNow} savedAt={savedAt}
           onClose={() => setSettingsOpen(false)} onReset={resetData} onImport={importData} notify={notify} initialTab={settingsTab}
-          saveError={saveError} onDetachRef={detachRef} onRemoveDemo={removeDemo} onImportClients={importClients} />
+          saveError={saveError} onDetachRef={detachRef} onRemoveDemo={removeDemo} onImportClients={importClients}
+          users={users} activity={activity} currentUser={currentUser} onLog={act}
+          onGoUsers={can("usuarios") ? () => { setSettingsOpen(false); goView("usuarios"); } : null} />
+      )}
+      {accountOpen && (
+        <ChangePasswordModal user={currentUser} forced={accountOpen === "forcada"} onSave={changeOwnPassword} onClose={() => setAccountOpen(false)} onLogout={doLogout} />
       )}
       {gate && gateClient && <StageGateModal status={gate.status} missing={gate.missing} client={gateClient} onFill={gateFill} onCancel={() => setGate(null)} />}
       {loss && lossClient && <LossReasonModal settings={settings} client={lossClient} onConfirm={lossConfirm} onCancel={() => setLoss(null)} />}
@@ -2304,7 +2816,9 @@ function sidebarDaysSince(iso) {
   return Math.max(0, Math.floor((Date.now() - t) / 864e5));
 }
 
-function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, savedAt, className = "", onClose, settings, saveError }) {
+function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, savedAt, className = "", onClose, settings, saveError, user, can, onLogout, onAccount, usersCount }) {
+  /* v5: cada item só aparece se a aba estiver liberada para o usuário logado (administrador vê tudo). */
+  const ok = (k) => (can ? can(k) : true);
   /* Contadores de TODOS os módulos, respeitando o chip "Só meus" (settings.ui.soMeus). */
   const mine = (c) => (settings ? matchesSoMeus(settings, c) : true);
   const everyone = modules.reduce((acc, m) => acc.concat((m.clients || []).filter(mine)), []);
@@ -2342,22 +2856,35 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
             );
           })}
         </div>
-        <button type="button" onClick={onManage} className="mt-1.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-brand transition hover:bg-brand-50">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-brand/40"><I.Plus size={15} /></span>
-          Gerenciar módulos
-        </button>
+        {ok("modulos") && (
+          <button type="button" onClick={onManage} className="mt-1.5 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm font-medium text-brand transition hover:bg-brand-50">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-dashed border-brand/40"><I.Plus size={15} /></span>
+            Gerenciar módulos
+          </button>
+        )}
 
         <div className="mt-6">
           <SectionLabel>Navegação</SectionLabel>
           <div className="space-y-0.5">
-            <SidebarNavItem id="dashboard" icon={I.Dash} active={view === "dashboard"} onSelect={onView}>Painel</SidebarNavItem>
-            <SidebarNavItem id="agenda" icon={I.ListChecks || I.Calendar} active={view === "agenda"} onSelect={onView}
-              badge={overdueAll > 0 ? overdueAll : null} badgeTone="late">Agenda</SidebarNavItem>
-            <SidebarNavItem id="clientes" icon={I.List} active={view === "clientes"} onSelect={onView} badge={mod.clients.length}>Clientes</SidebarNavItem>
-            <SidebarNavItem id="funil" icon={I.Kanban} active={view === "funil"} onSelect={onView}>Funil de vendas</SidebarNavItem>
-            <SidebarNavItem id="relatorios" icon={I.BarChart} active={view === "relatorios"} onSelect={onView}>Relatórios</SidebarNavItem>
+            {ok("dashboard") && <SidebarNavItem id="dashboard" icon={I.Dash} active={view === "dashboard"} onSelect={onView}>Painel</SidebarNavItem>}
+            {ok("agenda") && <SidebarNavItem id="agenda" icon={I.ListChecks || I.Calendar} active={view === "agenda"} onSelect={onView}
+              badge={overdueAll > 0 ? overdueAll : null} badgeTone="late">Agenda</SidebarNavItem>}
+            {ok("clientes") && <SidebarNavItem id="clientes" icon={I.List} active={view === "clientes"} onSelect={onView} badge={mod.clients.length}>Clientes</SidebarNavItem>}
+            {ok("funil") && <SidebarNavItem id="funil" icon={I.Kanban} active={view === "funil"} onSelect={onView}>Funil de vendas</SidebarNavItem>}
+            {ok("relatorios") && <SidebarNavItem id="relatorios" icon={I.BarChart} active={view === "relatorios"} onSelect={onView}>Relatórios</SidebarNavItem>}
+            {!MAIN_VIEWS.some(ok) && <p className="px-3 py-2 text-xs text-slate-400">Nenhuma aba liberada para você.</p>}
           </div>
         </div>
+
+        {isAdmin(user) && (
+          <div className="mt-6">
+            <SectionLabel>Administração</SectionLabel>
+            <div className="space-y-0.5">
+              <SidebarNavItem id="usuarios" icon={I.Shield} active={view === "usuarios"} onSelect={onView} badge={usersCount != null ? usersCount : null}>Usuários</SidebarNavItem>
+              <SidebarNavItem id="atividades" icon={I.History} active={view === "atividades"} onSelect={onView}>Atividades</SidebarNavItem>
+            </div>
+          </div>
+        )}
 
         {(overdueAll > 0 || stuck > 0) && (
           <div className="mt-6 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5 text-xs text-red-800">
@@ -2390,7 +2917,7 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
           </div>
         )}
 
-        {backupDue && (
+        {backupDue && ok("configuracoes") && (
           <button type="button" onClick={() => onSettings("backup")} title="Exportar um backup dos seus dados"
             className="mt-3 flex w-full items-center gap-2.5 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5 text-left text-xs text-amber-800 transition hover:bg-amber-100/70">
             <I.Download size={15} className="shrink-0 text-amber-600" />
@@ -2404,28 +2931,24 @@ function Sidebar({ modules, mod, view, onSwitch, onView, onManage, onSettings, s
       </div>
 
       <div className="border-t border-slate-100 px-3 py-3">
-        <button type="button" onClick={() => onSettings("equipe")} title="Quem está usando o CRM agora (define o responsável padrão e o autor das notas)"
-          className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-100">
-          {meName
-            ? <>
-                <Avatar name={meName} size={30} />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">Você</span>
-                  <span className="block truncate text-sm font-semibold text-ink">{meName}</span>
-                </span>
-              </>
-            : <>
-                <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full border border-dashed border-slate-300 text-slate-400"><I.User size={15} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">Você</span>
-                  <span className="block truncate text-sm font-medium text-brand">Definir quem sou eu</span>
-                </span>
-              </>}
-          <I.ChevR size={16} className="text-slate-300" />
-        </button>
-        <button type="button" onClick={() => onSettings()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink">
-          <I.Cog size={18} className="text-slate-400" /> Configurações e backup
-        </button>
+        {/* v5: quem está logado (clique = trocar senha) e o botão Sair. */}
+        <div className="mb-1 flex items-center gap-1">
+          <button type="button" onClick={onAccount} title="Minha conta · trocar senha"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-100">
+            <Avatar name={user ? user.nome : (meName || "?")} size={30} />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">{user ? perfilLabel(user.perfil) : "Você"}</span>
+              <span className="block truncate text-sm font-semibold text-ink">{user ? user.nome : meName || "—"}</span>
+              {user && meName && meName !== user.nome && <span className="block truncate text-[11px] text-slate-400">vendedor: {meName}</span>}
+            </span>
+          </button>
+          <IconBtn title="Sair do CRM" onClick={onLogout}><I.LogOut size={18} /></IconBtn>
+        </div>
+        {ok("configuracoes") && (
+          <button type="button" onClick={() => onSettings()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-ink">
+            <I.Cog size={18} className="text-slate-400" /> Configurações e backup
+          </button>
+        )}
         {saveError
           ? <button type="button" onClick={() => onSettings("backup")} title="O navegador recusou gravar os dados. Exporte um backup para não perder nada."
               className="mt-1 flex w-full items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-left text-[11px] text-red-700 transition hover:bg-red-100/70">
@@ -2591,7 +3114,7 @@ function DashTasksCard({ tasks, multi, settings, onSetSoMeus, onToggleTask, onPa
         action={
           <div className="flex shrink-0 items-center gap-1.5">
             <DashChip active={soMeus} onClick={() => onSetSoMeus(!soMeus)} icon={<I.UserCheck size={13} />}
-              title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Defina quem é você em Configurações > Equipe para este filtro funcionar"}>
+              title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Seu usuário precisa estar vinculado a um vendedor (Usuários) para este filtro funcionar"}>
               Só meus
             </DashChip>
             <button type="button" onClick={() => onGo("agenda")} className="inline-flex h-8 items-center gap-1 rounded-full px-2 text-xs font-semibold text-brand transition hover:bg-brand-50">Agenda <I.ChevR size={14} /></button>
@@ -2749,7 +3272,7 @@ function Dashboard({ mod, clients, allModules, settings, onOpen, onOpenIn, onTog
   const hasDemo = hasDemoClients(mods);
   const realCount = countRealClients(mods);
   const steps = [
-    { key: "eu", label: "Definir quem sou eu", hint: "Para filtrar o que é seu e assinar as notas", done: !!settings.usuarioAtual, onClick: () => onOpenSettings("equipe") },
+    { key: "eu", label: "Vincular você a um vendedor", hint: "Vem do seu login: para filtrar o que é seu e assinar as notas", done: !!settings.usuarioAtual, onClick: () => onOpenSettings("equipe") },
     { key: "cliente", label: "Cadastrar o primeiro cliente", hint: "Leva menos de um minuto", done: realCount > 0, onClick: onNew },
     { key: "demo", label: "Remover os exemplos", hint: "Fica só o que é seu", done: !hasDemo, onClick: onRemoveDemo },
     { key: "backup", label: "Exportar um backup", hint: "Uma cópia de segurança dos seus dados", done: !!onboarding.lastBackupAt, onClick: () => onOpenSettings("backup") },
@@ -4775,7 +5298,7 @@ function ModuleBuilder({ onCancel, onCreate, existingIds }) {
    v4: remover vendedor/origem/motivo avisa o app (onDetachRef), backup registra lastBackupAt,
    "Remover dados de exemplo", importação de planilha CSV e indicador que respeita saveError. */
 const SETTINGS_TABS = [
-  { key: "equipe",     label: "Equipe e metas", icon: "Users",  text: "Vendedores, metas mensais e quem está usando este computador." },
+  { key: "equipe",     label: "Equipe e metas", icon: "Users",  text: "Vendedores, metas mensais e o vendedor vinculado ao seu login." },
   { key: "funil",      label: "Funil",          icon: "Kanban", text: "Prazos por etapa, campos obrigatórios, motivos de perda e origens." },
   { key: "automacoes", label: "Automações",     icon: "Zap",    text: "Tarefas criadas sozinhas quando algo acontece no funil." },
   { key: "templates",  label: "Mensagens",      icon: "Chat",   text: "Modelos de WhatsApp e e-mail para enviar com um clique." },
@@ -4926,9 +5449,8 @@ function SettingsScoreRow({ label, value, onChange }) {
 }
 
 /* ================================ ABAS ==================================== */
-function SettingsEquipe({ s, patch, allClients, onDetachRef }) {
+function SettingsEquipe({ s, patch, allClients, onDetachRef, currentUser, onGoUsers }) {
   const [draft, setDraft] = useState({ nome: "", meta: 0 });
-  const vendOpts = s.vendedores.map((v) => ({ value: v.id, label: v.nome || "(sem nome)" }));
   const countFor = (id) => allClients.filter((c) => c.responsavel === id).length;
   const updateV = (id, p) => patch({ vendedores: s.vendedores.map((v) => (v.id === id ? { ...v, ...p } : v)) });
   /* Remove da lista (zera "quem sou eu" se era ele) e pede ao app para limpar o responsável nos clientes de todos os módulos. */
@@ -4946,14 +5468,21 @@ function SettingsEquipe({ s, patch, allClients, onDetachRef }) {
   const meNome = vendedorNome(s, s.usuarioAtual);
   return (
     <div className="space-y-4">
-      <SettingsSection title="Quem está usando este computador" text="Esse vendedor vira o responsável padrão dos novos clientes e o autor das notas que você escrever na ficha.">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          {meNome
-            ? <Avatar name={meNome} size={40} />
-            : <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400"><I.User size={18} /></span>}
-          <Select className="flex-1" value={s.usuarioAtual} onChange={(v) => patch({ usuarioAtual: v })} options={vendOpts} placeholder="Não definido" ariaLabel="Quem está usando este computador" />
+      {/* v5: "quem sou eu" vem do login (vendedor vinculado ao usuário), não é mais escolhido aqui. */}
+      <SettingsSection title="Você neste CRM" text="Quem entrou e o vendedor vinculado ao login: ele é o responsável padrão dos novos clientes, o autor das notas e o filtro “Só meus”."
+        action={onGoUsers ? <button type="button" onClick={onGoUsers} className={btn.secondary + " shrink-0 px-3 py-2 text-xs"}><I.Shield size={14} /> Usuários</button> : null}>
+        <div className="flex items-center gap-3">
+          <Avatar name={currentUser ? currentUser.nome : (meNome || "?")} size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-ink">
+              {currentUser ? currentUser.nome : "—"}
+              {currentUser && <span className="ml-2 text-xs font-normal text-slate-400">{perfilLabel(currentUser.perfil)}</span>}
+            </div>
+            <div className="text-xs text-slate-500">
+              {meNome ? "Vendedor na equipe: " + meNome : "Sem vendedor vinculado. Peça a um administrador para editar o seu usuário em Usuários."}
+            </div>
+          </div>
         </div>
-        {s.vendedores.length === 0 && <p className="mt-2 text-xs text-slate-400">Cadastre um vendedor abaixo para poder escolher.</p>}
       </SettingsSection>
 
       <SettingsSection title="Vendedores e metas" text="A meta é o valor fechado por mês. O painel mostra o progresso de cada um e o total do time.">
@@ -5397,7 +5926,7 @@ function SettingsCsvImport({ s, mod, csv, onBack, onImport }) {
   );
 }
 
-function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, onImport, onRemoveDemo, onImportClients, notify }) {
+function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, onImport, onRemoveDemo, onImportClients, notify, users, activity, onLog }) {
   const fileRef = useRef(null);
   const csvRef = useRef(null);
   const [csv, setCsv] = useState(null);   // { name, headers, rows } → abre a sub-tela de importação
@@ -5407,13 +5936,15 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
   const SheetIcon = I.Spreadsheet || I.Table;
 
   const exportJSON = () => {
-    downloadFile("prospera-crm-backup-" + stamp + ".json", serializeBackup(modules, s), "application/json");
+    downloadFile("prospera-crm-backup-" + stamp + ".json", serializeBackup(modules, s, { users: users || [], activity: activity || [] }), "application/json");
+    onLog && onLog("dados", "Backup exportado (" + totalClients + " cliente(s), " + (users || []).length + " usuário(s))");
     /* Registra o último backup (aviso de backup na sidebar e checklist de primeiros passos). `s` é o settings mais recente. */
     patch({ onboarding: { ...(s.onboarding || {}), lastBackupAt: nowISO() } });
     notify({ title: "Backup exportado", message: "Guarde o arquivo em um lugar seguro." });
   };
   const exportCSV = () => {
     downloadFile("prospera-crm-" + mod.id + "-" + stamp + ".csv", clientsToCSV(mod, s, mod.clients), "text/csv;charset=utf-8");
+    onLog && onLog("dados", "Planilha exportada: " + mod.nome + " (" + mod.clients.length + " cliente(s))");
     notify({ title: "Planilha exportada", message: settingsPlural(mod.clients.length, "cliente", "clientes") + " de " + mod.nome });
   };
   const onFile = (e) => {
@@ -5425,7 +5956,7 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
         const parsed = JSON.parse(String(reader.result));
         const result = parseBackup(parsed);
         if (!result || !Array.isArray(result.modules) || result.modules.length === 0) throw new Error("formato");
-        onImport({ modules: result.modules, settings: result.settings || null });
+        onImport({ modules: result.modules, settings: result.settings || null, users: result.users || null, activity: result.activity || null });
       } catch (err) {
         notify({ title: "Arquivo inválido", message: "Escolha um backup .json gerado por este CRM.", kind: "error" });
       }
@@ -5473,7 +6004,7 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
       </SettingsInfo>
 
       <div className="space-y-3">
-        <SettingsBackupRow icon={I.Download} title="Exportar backup completo" text="Arquivo .json com todos os módulos, clientes e configurações (equipe, automações, modelos). Serve para restaurar em outro computador.">
+        <SettingsBackupRow icon={I.Download} title="Exportar backup completo" text="Arquivo .json com todos os módulos, clientes, configurações, usuários (senhas protegidas por hash) e o registro de atividades. Serve para levar o CRM para outro computador.">
           <button type="button" onClick={exportJSON} className={btn.primary}><I.Download size={16} /> Exportar</button>
         </SettingsBackupRow>
         <SettingsBackupRow icon={I.Upload} title="Importar backup" text="Substitui os dados atuais pelos do arquivo .json escolhido. Aceita backups da versão anterior.">
@@ -5513,13 +6044,17 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
 
 /* ================================ MODAL =================================== */
 function SettingsModal({ modules, mod, settings, onSaveSettings, savedAt, onClose, onReset, onImport, notify, initialTab,
-                         saveError, onDetachRef, onRemoveDemo, onImportClients }) {
+                         saveError, onDetachRef, onRemoveDemo, onImportClients, users, activity, currentUser, onLog, onGoUsers }) {
   const [tab, setTab] = useState(SETTINGS_TABS.some((t) => t.key === initialTab) ? initialTab : "equipe");
   const [savedTick, setSavedTick] = useState(null);
   useEffect(() => { if (!savedTick) return; const t = setTimeout(() => setSavedTick(null), 2500); return () => clearTimeout(t); }, [savedTick]);
 
   const s = settingsSafe(settings);
-  const patch = (partial) => { onSaveSettings({ ...s, ...partial }); setSavedTick(Date.now()); };
+  const patch = (partial) => {
+    onSaveSettings({ ...s, ...partial }); setSavedTick(Date.now());
+    /* v5: fica no registro de atividades (repetições em 2 min são ignoradas, então digitar não enche a lista). */
+    onLog && onLog("config", "Configurações alteradas: " + (SETTINGS_TABS.find((t) => t.key === tab) || SETTINGS_TABS[0]).label);
+  };
   const allClients = modules.reduce((acc, m) => acc.concat(m.clients || []), []);
   const current = SETTINGS_TABS.find((t) => t.key === tab) || SETTINGS_TABS[0];
   const CurIcon = I[current.icon] || I.Cog;
@@ -5578,14 +6113,15 @@ function SettingsModal({ modules, mod, settings, onSaveSettings, savedAt, onClos
               <p className="text-xs text-slate-500">{current.text}</p>
             </div>
           </div>
-          {tab === "equipe" && <SettingsEquipe s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} />}
+          {tab === "equipe" && <SettingsEquipe s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} currentUser={currentUser} onGoUsers={onGoUsers} />}
           {tab === "funil" && <SettingsFunil s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} />}
           {tab === "automacoes" && <SettingsAutomacoes s={s} patch={patch} />}
           {tab === "templates" && <SettingsTemplates s={s} patch={patch} mod={mod} />}
           {tab === "pontuacao" && <SettingsPontuacao s={s} patch={patch} mod={mod} />}
           {tab === "backup" && (
             <SettingsBackup s={s} modules={modules} mod={mod} savedAt={savedAt} saveError={saveError} patch={patch}
-              onReset={onReset} onImport={onImport} onRemoveDemo={onRemoveDemo} onImportClients={onImportClients} notify={notify} />
+              onReset={onReset} onImport={onImport} onRemoveDemo={onRemoveDemo} onImportClients={onImportClients} notify={notify}
+              users={users} activity={activity} onLog={onLog} />
           )}
         </div>
       </div>
@@ -6833,7 +7369,7 @@ function Agenda({ allModules, settings, onOpenIn, onToggleTask, onPatchTask, onS
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         <DashChip active={soMeus} onClick={() => onSetSoMeus(!soMeus)} icon={<I.UserCheck size={13} />}
-          title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Defina quem é você em Configurações > Equipe para este filtro funcionar"}>
+          title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Seu usuário precisa estar vinculado a um vendedor (Usuários) para este filtro funcionar"}>
           Só meus
         </DashChip>
         <span className="hidden h-5 w-px bg-slate-200 sm:block" aria-hidden="true" />
@@ -6905,13 +7441,672 @@ function Agenda({ allModules, settings, onOpenIn, onToggleTask, onPatchTask, onS
   );
 }
 
+/* >>> src/20-auth.jsx */
+/* ------------------------------- Acesso (v5) ------------------------------ */
+/* Telas de entrada (primeiro acesso e login), troca de senha e aviso de "sem
+   acesso". A conferência de senha é local (authCheck, 01-core.js): não existe
+   servidor; usuários e senhas (em hash) ficam no localStorage deste navegador. */
+
+/* Moldura centralizada das telas de entrada. */
+function AuthShell({ title, subtitle, children, footer, wide = false }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-4 py-10 text-ink">
+      <div className={"w-full " + (wide ? "max-w-xl" : "max-w-sm")}>
+        <div className="mb-6 flex justify-center"><Logo height={30} /></div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-pop anim-pop sm:p-8">
+          <h1 className="text-xl font-bold tracking-tight text-ink">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm leading-relaxed text-slate-500">{subtitle}</p>}
+          <div className="mt-5">{children}</div>
+        </div>
+        {footer && <div className="mt-4 text-center text-xs leading-relaxed text-slate-400">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+/* Campo de senha com botão "mostrar / esconder". onChange recebe o valor (string). */
+function PasswordInput({ value, onChange, placeholder = "••••••••", autoComplete = "current-password", error, inputRef, ariaLabel, autoFocus = false }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input ref={inputRef} type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        autoComplete={autoComplete} aria-label={ariaLabel} autoFocus={autoFocus} className={inputCls + " pr-11" + (error ? inputErrCls : "")} />
+      <button type="button" onClick={() => setShow((s) => !s)} aria-label={show ? "Esconder senha" : "Mostrar senha"} aria-pressed={show} tabIndex={-1}
+        className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
+        {show ? <I.EyeOff size={16} /> : <I.Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+function AuthError({ children }) {
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-800">
+      <I.Alert size={16} className="mt-0.5 shrink-0" /><span>{children}</span>
+    </div>
+  );
+}
+
+/* Primeiro acesso: ainda não existe nenhum usuário → cria o primeiro administrador e já entra. */
+function SetupScreen({ vendedores = [], onCreate }) {
+  const [form, setForm] = useState({ nome: "", login: "", senha: "", confirma: "", vendedorId: "__novo__" });
+  const [errors, setErrors] = useState({});
+  const [busy, setBusy] = useState(false);
+  const nameRef = useRef(null);
+  useEffect(() => { nameRef.current && nameRef.current.focus(); }, []);
+  const set = (k) => (v) => { setForm((f) => ({ ...f, [k]: v })); if (errors[k]) setErrors((e) => ({ ...e, [k]: null })); };
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    const er = {};
+    if (!form.nome.trim()) er.nome = "Informe seu nome.";
+    if (!form.login.trim()) er.login = "Informe um login (pode ser o seu e-mail).";
+    const pe = authValidatePassword(form.senha);
+    if (pe) er.senha = pe;
+    else if (form.senha !== form.confirma) er.confirma = "As senhas não são iguais.";
+    if (Object.keys(er).length) { setErrors(er); return; }
+    setBusy(true);
+    /* O hash da senha leva alguns milissegundos: deixa o botão mudar para "Criando…" antes. */
+    setTimeout(() => onCreate({ nome: form.nome.trim(), login: form.login, senha: form.senha, vendedorId: form.vendedorId }), 30);
+  };
+  const vendOpts = [{ value: "__novo__", label: "Criar um vendedor com o meu nome" }, ...vendedores.map((v) => ({ value: v.id, label: v.nome }))];
+  return (
+    <AuthShell wide title="Bem-vindo ao Próspera CRM" subtitle="Antes de começar, crie o primeiro administrador. Ele cadastra os outros usuários e escolhe o que cada um pode ver."
+      footer={<>Usuários e senhas ficam salvos só neste navegador, junto com os dados do CRM.</>}>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Field label="Seu nome" required error={errors.nome}>
+              <input ref={nameRef} className={inputCls + (errors.nome ? inputErrCls : "")} value={form.nome} onChange={(e) => set("nome")(e.target.value)} placeholder="Ex.: Ana Ribeiro" autoComplete="name" />
+            </Field>
+          </div>
+          <div className="sm:col-span-2">
+            <Field label="Login" required error={errors.login} hint={!errors.login ? "É o que você digita para entrar. Pode ser o seu e-mail." : null}>
+              <input className={inputCls + (errors.login ? inputErrCls : "")} value={form.login} onChange={(e) => set("login")(e.target.value)} placeholder="voce@prospera.com.br" autoComplete="username" inputMode="email" autoCapitalize="none" />
+            </Field>
+          </div>
+          <Field label="Senha" required error={errors.senha} hint={!errors.senha ? "Mínimo de 6 caracteres" : null}>
+            <PasswordInput value={form.senha} onChange={set("senha")} autoComplete="new-password" error={errors.senha} ariaLabel="Senha" />
+          </Field>
+          <Field label="Repita a senha" required error={errors.confirma}>
+            <PasswordInput value={form.confirma} onChange={set("confirma")} autoComplete="new-password" error={errors.confirma} ariaLabel="Repita a senha" />
+          </Field>
+          {vendedores.length > 0 && (
+            <div className="sm:col-span-2">
+              <Field label="Você na equipe de vendas" hint="Liga o seu login a um vendedor: ele vira o responsável padrão dos seus clientes e o autor das suas notas.">
+                <Select value={form.vendedorId} onChange={set("vendedorId")} options={vendOpts} ariaLabel="Vendedor correspondente" />
+              </Field>
+            </div>
+          )}
+        </div>
+        <button type="submit" disabled={busy} className={btn.primary + " w-full"}>
+          {busy ? "Criando…" : <><I.Shield size={16} /> Criar administrador e entrar</>}
+        </button>
+      </form>
+    </AuthShell>
+  );
+}
+
+/* Tela de login. */
+function LoginScreen({ users, onLogin }) {
+  const [login, setLogin] = useState("");
+  const [senha, setSenha] = useState("");
+  const [erro, setErro] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { ref.current && ref.current.focus(); }, []);
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    if (!login.trim() || !senha) { setErro("Informe login e senha."); return; }
+    setBusy(true); setErro("");
+    setTimeout(() => {
+      const r = authCheck(users, login, senha);
+      if (!r.ok) {
+        setErro(r.erro === "inativo" ? "Este acesso está desativado. Fale com um administrador." : "Login ou senha incorretos.");
+        setBusy(false);
+        return;
+      }
+      onLogin(r.user);
+    }, 30);
+  };
+  return (
+    <AuthShell title="Entrar no CRM" subtitle="Use o login e a senha que o administrador criou para você."
+      footer={<>Esqueceu a senha? Peça a um administrador para redefinir.<br />Os dados ficam salvos neste navegador.</>}>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <Field label="Login">
+          <input ref={ref} className={inputCls} value={login} onChange={(e) => setLogin(e.target.value)} placeholder="voce@prospera.com.br" autoComplete="username" inputMode="email" autoCapitalize="none" />
+        </Field>
+        <Field label="Senha">
+          <PasswordInput value={senha} onChange={setSenha} autoComplete="current-password" ariaLabel="Senha" />
+        </Field>
+        {erro && <AuthError>{erro}</AuthError>}
+        <button type="submit" disabled={busy} className={btn.primary + " w-full"}>{busy ? "Entrando…" : <><I.LogIn size={16} /> Entrar</>}</button>
+      </form>
+    </AuthShell>
+  );
+}
+
+/* Trocar a própria senha. `forced`: um administrador redefiniu a senha e a pessoa precisa escolher
+   a dela antes de continuar (não dá para fechar; só sair do CRM). */
+function ChangePasswordModal({ user, forced = false, onSave, onClose, onLogout }) {
+  const [atual, setAtual] = useState("");
+  const [nova, setNova] = useState("");
+  const [confirma, setConfirma] = useState("");
+  const [errors, setErrors] = useState({});
+  const submit = () => {
+    const er = {};
+    if (!forced && !authVerify(user, atual)) er.atual = "Senha atual incorreta.";
+    const pe = authValidatePassword(nova);
+    if (pe) er.nova = pe;
+    else if (nova !== confirma) er.confirma = "As senhas não são iguais.";
+    else if (!forced && nova === atual) er.nova = "A nova senha precisa ser diferente da atual.";
+    if (Object.keys(er).length) { setErrors(er); return; }
+    onSave(nova);
+  };
+  const onKey = (e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); submit(); } };
+  const footer = (
+    <>
+      {forced
+        ? <button type="button" onClick={onLogout} className={btn.ghost}><I.LogOut size={16} /> Sair</button>
+        : <button type="button" onClick={onClose} className={btn.ghost}>Cancelar</button>}
+      <button type="button" onClick={submit} className={btn.primary}><I.Lock size={16} /> Salvar nova senha</button>
+    </>
+  );
+  return (
+    <Modal title={forced ? "Defina sua nova senha" : "Trocar minha senha"}
+      subtitle={forced ? "Um administrador redefiniu sua senha. Escolha uma nova para continuar." : user.nome + " · " + user.login}
+      icon={I.Lock} onClose={forced ? () => {} : onClose} footer={footer} width="max-w-md">
+      <div className="space-y-4" onKeyDown={onKey}>
+        {!forced && (
+          <Field label="Senha atual" error={errors.atual}>
+            <PasswordInput value={atual} onChange={setAtual} autoComplete="current-password" error={errors.atual} ariaLabel="Senha atual" autoFocus />
+          </Field>
+        )}
+        <Field label="Nova senha" error={errors.nova} hint={!errors.nova ? "Mínimo de 6 caracteres" : null}>
+          <PasswordInput value={nova} onChange={setNova} autoComplete="new-password" error={errors.nova} ariaLabel="Nova senha" autoFocus={forced} />
+        </Field>
+        <Field label="Repita a nova senha" error={errors.confirma}>
+          <PasswordInput value={confirma} onChange={setConfirma} autoComplete="new-password" error={errors.confirma} ariaLabel="Repita a nova senha" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+/* Quando o administrador não liberou nenhuma aba para o usuário. */
+function NoAccessView({ onLogout }) {
+  return (
+    <Card className="mx-auto max-w-lg">
+      <EmptyState icon={I.Shield} title="Nenhuma área liberada para você"
+        text="Um administrador precisa liberar ao menos uma aba (Painel, Agenda, Clientes, Funil ou Relatórios) para o seu usuário."
+        action={<button type="button" onClick={onLogout} className={btn.secondary}><I.LogOut size={16} /> Sair</button>} />
+    </Card>
+  );
+}
+
+/* >>> src/21-users.jsx */
+/* ------------------------------ Usuários (v5) ----------------------------- */
+/* Tela "Usuários" (só administrador): lista, novo/editar, redefinir senha,
+   desativar/reativar e excluir. As abas que cada usuário vê são escolhidas aqui. */
+
+function PerfilBadge({ perfil, size = "sm" }) {
+  const admin = perfil === "admin";
+  return (
+    <span className={uiPillCls(size)} style={admin ? { background: "#EEF2FF", color: "#3730A3" } : { background: "#F1F5F9", color: "#475569" }}>
+      {admin ? <I.Shield size={uiPillIcon(size)} /> : <I.User size={uiPillIcon(size)} />}{perfilLabel(perfil)}
+    </span>
+  );
+}
+function AtivoBadge({ ativo, size = "sm" }) {
+  return (
+    <span className={uiPillCls(size)} style={ativo ? { background: "#E6F6EE", color: "#065F46" } : { background: "#FEE2E2", color: "#991B1B" }}>
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: ativo ? "#047857" : "#DC2626" }} />{ativo ? "Ativo" : "Desativado"}
+    </span>
+  );
+}
+/* Resumo das abas liberadas (chips). Administrador: "Vê tudo". */
+function UserTabsSummary({ user }) {
+  if (isAdmin(user)) return <span className="inline-flex items-center gap-1 text-xs text-slate-500"><I.Eye size={12} /> Vê tudo</span>;
+  const labels = userTabLabels(user);
+  if (!labels.length) return <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700"><I.Alert size={12} /> Nenhuma aba liberada</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {labels.map((l) => <span key={l} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">{l}</span>)}
+    </span>
+  );
+}
+
+/* Formulário de usuário (novo ou edição). A senha só entra no cadastro; depois é por "Redefinir senha". */
+function UserFormModal({ initial, users, settings, currentUser, onSave, onClose }) {
+  const isEdit = !!(initial && initial.id);
+  const isSelf = isEdit && !!currentUser && initial.id === currentUser.id;
+  const [form, setForm] = useState(() => ({
+    nome: initial ? initial.nome : "", login: initial ? initial.login : "", senha: "", confirma: "",
+    perfil: initial ? initial.perfil : "usuario",
+    vendedorId: initial ? (initial.vendedorId || "") : "__novo__",
+    abas: initial ? { ...initial.abas } : permDefaults(false),
+    trocarSenha: !isEdit,
+  }));
+  const [errors, setErrors] = useState({});
+  const nameRef = useRef(null);
+  useEffect(() => { nameRef.current && nameRef.current.focus(); }, []);
+  const set = (k) => (v) => { setForm((f) => ({ ...f, [k]: v })); if (errors[k]) setErrors((e) => ({ ...e, [k]: null })); };
+  const setAba = (k, v) => setForm((f) => ({ ...f, abas: { ...f.abas, [k]: !!v } }));
+  const setAll = (v) => setForm((f) => ({ ...f, abas: permDefaults(v) }));
+  const vendedores = (settings && settings.vendedores) || [];
+  const vendOpts = [{ value: "__novo__", label: "Criar um vendedor novo com este nome" }, ...vendedores.map((v) => ({ value: v.id, label: v.nome }))];
+  /* Único administrador ativo não pode virar "usuário" (o CRM ficaria sem administrador). */
+  const lastAdmin = isEdit && initial.perfil === "admin" && initial.ativo && activeAdmins(users).length <= 1;
+  const isAdminForm = form.perfil === "admin";
+  const allOn = PERM_TABS.every((t) => form.abas[t.key]);
+
+  const submit = () => {
+    const er = {};
+    if (!form.nome.trim()) er.nome = "Informe o nome.";
+    if (!form.login.trim()) er.login = "Informe o login.";
+    else if (authLoginTaken(users, form.login, initial && initial.id)) er.login = "Este login já é usado por outro usuário.";
+    if (!isEdit) {
+      const pe = authValidatePassword(form.senha);
+      if (pe) er.senha = pe;
+      else if (form.senha !== form.confirma) er.confirma = "As senhas não são iguais.";
+    }
+    if (lastAdmin && form.perfil !== "admin") er.perfil = "Este é o único administrador ativo. Torne outra pessoa administradora antes.";
+    if (Object.keys(er).length) { setErrors(er); return; }
+    const data = {
+      nome: form.nome.trim(), login: authNormalizeLogin(form.login), perfil: form.perfil,
+      vendedorId: form.vendedorId, abas: isAdminForm ? permDefaults(true) : { ...form.abas },
+    };
+    if (!isEdit) { data.senha = form.senha; data.trocarSenha = !!form.trocarSenha; }
+    onSave(data);
+  };
+  const onKey = (e) => { if (e.key === "Enter" && !["TEXTAREA", "BUTTON", "SELECT"].includes(e.target.tagName)) { e.preventDefault(); submit(); } };
+  const footer = (
+    <>
+      <button type="button" onClick={onClose} className={btn.ghost}>Cancelar</button>
+      <button type="button" onClick={submit} className={btn.primary}>{isEdit ? <><I.CheckSimple size={16} /> Salvar</> : <><I.Plus size={16} /> Criar usuário</>}</button>
+    </>
+  );
+
+  return (
+    <Modal title={isEdit ? "Editar usuário" : "Novo usuário"} subtitle={isEdit ? initial.nome + " · " + initial.login : "Quem vai usar o CRM e o que pode ver"}
+      icon={I.Users} onClose={onClose} footer={footer} width="max-w-2xl">
+      <div className="space-y-5" onKeyDown={onKey}>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Nome" required error={errors.nome}>
+            <input ref={nameRef} className={inputCls + (errors.nome ? inputErrCls : "")} value={form.nome} onChange={(e) => set("nome")(e.target.value)} placeholder="Ex.: Ana Ribeiro" autoComplete="off" />
+          </Field>
+          <Field label="Login" required error={errors.login} hint={!errors.login ? "O que a pessoa digita para entrar (pode ser o e-mail)" : null}>
+            <input className={inputCls + (errors.login ? inputErrCls : "")} value={form.login} onChange={(e) => set("login")(e.target.value)} placeholder="ana@prospera.com.br" autoComplete="off" autoCapitalize="none" />
+          </Field>
+          {!isEdit && (
+            <>
+              <Field label="Senha inicial" required error={errors.senha} hint={!errors.senha ? "Mínimo de 6 caracteres" : null}>
+                <PasswordInput value={form.senha} onChange={set("senha")} autoComplete="new-password" error={errors.senha} ariaLabel="Senha inicial" />
+              </Field>
+              <Field label="Repita a senha" required error={errors.confirma}>
+                <PasswordInput value={form.confirma} onChange={set("confirma")} autoComplete="new-password" error={errors.confirma} ariaLabel="Repita a senha" />
+              </Field>
+              <div className="flex items-center gap-3 rounded-xl bg-slate-50 px-3.5 py-2.5 sm:col-span-2">
+                <SettingsSwitch checked={form.trocarSenha} onChange={set("trocarSenha")} label="Pedir troca de senha no primeiro acesso" />
+                <span className="text-sm text-slate-700">Pedir para trocar a senha no primeiro acesso</span>
+              </div>
+            </>
+          )}
+          <div className="sm:col-span-2">
+            <Field label="Vendedor na equipe" hint="Ao entrar, o usuário passa a ser esse vendedor: responsável padrão dos clientes dele, autor das notas e filtro “Só meus”.">
+              <Select value={form.vendedorId} onChange={set("vendedorId")} options={vendOpts} placeholder="Nenhum (não entra nas metas)" ariaLabel="Vendedor na equipe" />
+            </Field>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-2 text-sm font-medium text-slate-700">Perfil</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Perfil">
+            {USER_PERFIS.map((p) => {
+              const on = form.perfil === p.key;
+              const dis = isSelf && p.key !== "admin";
+              return (
+                <button key={p.key} type="button" role="radio" aria-checked={on} disabled={dis} onClick={() => set("perfil")(p.key)}
+                  title={dis ? "Você não pode tirar o seu próprio acesso de administrador" : ""}
+                  className={"flex items-start gap-3 rounded-xl border p-3 text-left transition disabled:opacity-50 " + (on ? "border-brand bg-brand-50/60 ring-4 ring-brand/10" : "border-slate-200 hover:border-slate-300")}>
+                  <span className={"mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + (p.key === "admin" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500")}>
+                    {p.key === "admin" ? <I.Shield size={16} /> : <I.User size={16} />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-ink">{p.label}</span>
+                    <span className="block text-xs text-slate-500">{p.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {errors.perfil && <p className="mt-1.5 text-xs font-medium text-red-600">{errors.perfil}</p>}
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-start justify-between gap-2">
+            <div>
+              <div className="text-sm font-medium text-slate-700">Abas que este usuário vê</div>
+              <p className="text-xs text-slate-500">{isAdminForm ? "Administradores veem tudo, inclusive Usuários e Atividades." : "Desligue o que não precisa aparecer para essa pessoa."}</p>
+            </div>
+            {!isAdminForm && <button type="button" onClick={() => setAll(!allOn)} className="shrink-0 text-xs font-semibold text-brand hover:underline">{allOn ? "Desmarcar tudo" : "Marcar tudo"}</button>}
+          </div>
+          <div className={"grid grid-cols-1 gap-2 sm:grid-cols-2 " + (isAdminForm ? "opacity-60" : "")}>
+            {PERM_TABS.map((t) => {
+              const Ic = I[t.icon] || I.Grid;
+              const on = isAdminForm || !!form.abas[t.key];
+              return (
+                <div key={t.key} className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2.5">
+                  <span className={"flex h-8 w-8 shrink-0 items-center justify-center rounded-lg " + (on ? "bg-brand-50 text-brand" : "bg-slate-100 text-slate-400")}><Ic size={16} /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-ink">{t.label}</span>
+                    <span className="block truncate text-[11px] text-slate-500">{t.hint}</span>
+                  </span>
+                  {isAdminForm
+                    ? <span className="text-xs font-semibold text-slate-400">Sempre</span>
+                    : <SettingsSwitch checked={on} onChange={(v) => setAba(t.key, v)} label={"Liberar " + t.label} />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* Redefinir a senha de outro usuário (administrador). A pessoa troca no próximo acesso. */
+function ResetPasswordModal({ user, onSave, onClose }) {
+  const [nova, setNova] = useState("");
+  const [confirma, setConfirma] = useState("");
+  const [errors, setErrors] = useState({});
+  const submit = () => {
+    const er = {};
+    const pe = authValidatePassword(nova);
+    if (pe) er.nova = pe;
+    else if (nova !== confirma) er.confirma = "As senhas não são iguais.";
+    if (Object.keys(er).length) { setErrors(er); return; }
+    onSave(nova);
+  };
+  const onKey = (e) => { if (e.key === "Enter" && e.target.tagName !== "BUTTON") { e.preventDefault(); submit(); } };
+  const footer = (
+    <>
+      <button type="button" onClick={onClose} className={btn.ghost}>Cancelar</button>
+      <button type="button" onClick={submit} className={btn.primary}><I.Lock size={16} /> Redefinir senha</button>
+    </>
+  );
+  return (
+    <Modal title="Redefinir senha" subtitle={user.nome + " · " + user.login} icon={I.Lock} onClose={onClose} footer={footer} width="max-w-md">
+      <div className="space-y-4" onKeyDown={onKey}>
+        <SettingsInfo>Informe a senha temporária para <b className="text-ink">{user.nome}</b> com segurança. No próximo acesso o CRM pede para a pessoa escolher uma senha própria.</SettingsInfo>
+        <Field label="Senha temporária" error={errors.nova} hint={!errors.nova ? "Mínimo de 6 caracteres" : null}>
+          <PasswordInput value={nova} onChange={setNova} autoComplete="new-password" error={errors.nova} ariaLabel="Senha temporária" autoFocus />
+        </Field>
+        <Field label="Repita a senha" error={errors.confirma}>
+          <PasswordInput value={confirma} onChange={setConfirma} autoComplete="new-password" error={errors.confirma} ariaLabel="Repita a senha" />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+/* Tela "Usuários". As regras (não desativar a si mesmo, manter ao menos um administrador) são
+   conferidas também no app (06-app.jsx); aqui só apagamos/desabilitamos os botões. */
+function UsersView({ users, currentUser, settings, onCreate, onUpdate, onResetPassword, onToggleActive, onDelete, onGoActivity }) {
+  const [editing, setEditing] = useState(null);     // null | "new" | usuário
+  const [resetting, setResetting] = useState(null); // usuário
+  const admins = activeAdmins(users);
+  const ativos = users.filter((u) => u.ativo).length;
+  const sorted = [...users].sort((a, b) => (Number(b.ativo) - Number(a.ativo)) || (Number(isAdmin(b)) - Number(isAdmin(a))) || a.nome.localeCompare(b.nome));
+  const smallBtn = btn.secondary + " px-3 py-2 text-xs";
+  const smallDanger = btn.dangerSoft + " px-3 py-2 text-xs";
+
+  const save = (data) => {
+    if (editing === "new") onCreate(data);
+    else if (editing && editing.id) onUpdate(editing.id, data);
+    setEditing(null);
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="flex items-center gap-2 text-[15px] font-semibold text-ink"><I.Users size={17} className="text-slate-400" /> Quem usa o CRM</h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {users.length} {users.length === 1 ? "usuário" : "usuários"} · {ativos} {ativos === 1 ? "ativo" : "ativos"} · {admins.length} {admins.length === 1 ? "administrador" : "administradores"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onGoActivity && <button type="button" onClick={onGoActivity} className={btn.secondary}><I.History size={16} /> Ver atividades</button>}
+            <button type="button" onClick={() => setEditing("new")} className={btn.primary}><I.Plus size={18} /> Novo usuário</button>
+          </div>
+        </div>
+      </Card>
+
+      <SettingsInfo icon={I.Info}>
+        <b className="text-ink">Usuários e senhas ficam salvos neste navegador</b>, junto com os clientes. Para o time usar em outro computador,
+        exporte um backup em Configurações → Backup e importe lá (o backup leva os usuários). Cada pessoa vê só as abas que você liberar.
+      </SettingsInfo>
+
+      <Card>
+        <ul className="divide-y divide-slate-100">
+          {sorted.map((u) => {
+            const self = !!currentUser && u.id === currentUser.id;
+            const lastAdmin = isAdmin(u) && u.ativo && admins.length <= 1;
+            const vend = vendedorNome(settings, u.vendedorId);
+            const lockNote = self ? "Você não pode fazer isso com o seu próprio usuário" : lastAdmin ? "Único administrador ativo: torne outra pessoa administradora antes" : "";
+            return (
+              <li key={u.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-start">
+                <Avatar name={u.nome} size={40} className={u.ativo ? "" : "opacity-50"} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={"text-sm font-semibold " + (u.ativo ? "text-ink" : "text-slate-500")}>{u.nome}</span>
+                    {self && <span className="text-xs text-slate-400">(você)</span>}
+                    <PerfilBadge perfil={u.perfil} size="xs" />
+                    <AtivoBadge ativo={u.ativo} size="xs" />
+                    {u.trocarSenha && <span className={uiPillCls("xs")} style={{ background: "#FEF3C7", color: "#92400E" }}><I.Lock size={11} /> troca de senha pendente</span>}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-1"><I.User size={12} /> {u.login}</span>
+                    <span className="inline-flex items-center gap-1" title="Vendedor vinculado na equipe"><I.Briefcase size={12} /> {vend || "sem vendedor"}</span>
+                    <span className="inline-flex items-center gap-1" title={u.ultimoAcesso ? fmtDateTime(u.ultimoAcesso) : "Nunca entrou"}><I.Clock size={12} /> {u.ultimoAcesso ? "entrou " + relTime(u.ultimoAcesso) : "nunca entrou"}</span>
+                  </div>
+                  <div className="mt-2"><UserTabsSummary user={u} /></div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                  <button type="button" onClick={() => setEditing(u)} className={smallBtn}><I.Pencil size={14} /> Editar</button>
+                  <button type="button" onClick={() => setResetting(u)} className={smallBtn}><I.Lock size={14} /> Senha</button>
+                  <button type="button" onClick={() => onToggleActive(u.id)} disabled={self || (u.ativo && lastAdmin)} title={self || (u.ativo && lastAdmin) ? lockNote : ""} className={smallBtn + " disabled:opacity-40"}>
+                    {u.ativo ? <><I.X size={14} /> Desativar</> : <><I.CheckSimple size={14} /> Reativar</>}
+                  </button>
+                  <button type="button" onClick={() => onDelete(u.id)} disabled={self || lastAdmin} title={self || lastAdmin ? lockNote : ""} className={smallDanger + " disabled:opacity-40"}><I.Trash size={14} /> Excluir</button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+
+      {editing && (
+        <UserFormModal initial={editing === "new" ? null : editing} users={users} settings={settings} currentUser={currentUser}
+          onSave={save} onClose={() => setEditing(null)} />
+      )}
+      {resetting && (
+        <ResetPasswordModal user={resetting} onSave={(senha) => { onResetPassword(resetting.id, senha); setResetting(null); }} onClose={() => setResetting(null)} />
+      )}
+    </div>
+  );
+}
+
+/* >>> src/22-activity.jsx */
+/* ----------------------------- Atividades (v5) ---------------------------- */
+/* Tela "Atividades" (só administrador): resumo de uso por usuário e o registro
+   de tudo o que foi feito no CRM (entradas, clientes, etapas, tarefas, contatos,
+   notas, propostas, backup/dados, configurações e gestão de usuários). */
+
+const ACTIVITY_PERIODS = [{ days: 7, label: "7 dias" }, { days: 30, label: "30 dias" }, { days: 90, label: "90 dias" }, { days: 0, label: "Tudo" }];
+const ACTIVITY_PAGE = 80;
+
+function ActivityTypeBadge({ tipo, size = "xs" }) {
+  const m = activityTypeMeta(tipo);
+  const Ic = I[m.icon] || I.Activity;
+  return <span className={uiPillCls(size)} style={{ background: m.soft, color: m.text }}><Ic size={uiPillIcon(size)} />{m.label}</span>;
+}
+/* "Hoje", "Ontem" ou "seg, 20/10". */
+function activityDayLabel(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "Sem data";
+  const day = toISODate(d);
+  if (day === todayISO()) return "Hoje";
+  if (day === addDaysISO(todayISO(), -1)) return "Ontem";
+  return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }).replace(".", "");
+}
+function activityTime(iso) { const d = new Date(iso); return isNaN(d.getTime()) ? "" : pad2(d.getHours()) + ":" + pad2(d.getMinutes()); }
+
+function ActivityView({ activity, users, modules, onOpenIn, notify }) {
+  const [days, setDays] = useState(30);
+  const [userId, setUserId] = useState("");
+  const [tipo, setTipo] = useState("");
+  const [q, setQ] = useState("");
+  const [limit, setLimit] = useState(ACTIVITY_PAGE);
+
+  const inPeriod = useMemo(() => activityInDays(activity, days), [activity, days]);
+  const summary = useMemo(() => activitySummary(inPeriod, users), [inPeriod, users]);
+  const filtered = useMemo(() => {
+    const qq = coreNormalizeText(q);
+    return inPeriod.filter((e) =>
+      (!userId || e.userId === userId) && (!tipo || e.tipo === tipo) &&
+      (!qq || coreNormalizeText(e.texto + " " + e.clientNome + " " + e.userNome).includes(qq)));
+  }, [inPeriod, userId, tipo, q]);
+  useEffect(() => { setLimit(ACTIVITY_PAGE); }, [days, userId, tipo, q]);
+  const shown = filtered.slice(0, limit);
+
+  /* Agrupa por dia (a lista já vem da mais recente para a mais antiga). */
+  const groups = [];
+  shown.forEach((e) => {
+    const label = activityDayLabel(e.at);
+    const g = groups[groups.length - 1];
+    if (g && g.label === label) g.items.push(e); else groups.push({ label, items: [e] });
+  });
+  const modName = (id) => { const m = (modules || []).find((x) => x.id === id); return m ? m.nome : ""; };
+  const clientExists = (e) => { const m = (modules || []).find((x) => x.id === e.modId); return !!(m && (m.clients || []).some((c) => c.id === e.clientId)); };
+  const exportCSV = () => {
+    downloadFile("prospera-crm-atividades-" + todayISO() + ".csv", activityToCSV(filtered), "text/csv;charset=utf-8");
+    notify && notify({ title: "Atividades exportadas", message: filtered.length + (filtered.length === 1 ? " registro" : " registros") });
+  };
+  const userOpts = users.map((u) => ({ value: u.id, label: u.nome }));
+  const tipoOpts = ACTIVITY_TYPES.map((t) => ({ value: t.key, label: t.label }));
+  const periodLabel = (ACTIVITY_PERIODS.find((p) => p.days === days) || ACTIVITY_PERIODS[1]).label;
+  const hasFilter = !!(userId || tipo || q);
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5" role="tablist" aria-label="Período">
+            {ACTIVITY_PERIODS.map((p) => (
+              <button key={p.days} type="button" role="tab" aria-selected={days === p.days} onClick={() => setDays(p.days)}
+                className={"rounded-lg px-3 py-1.5 text-xs font-semibold transition " + (days === p.days ? "bg-ink text-white" : "text-slate-600 hover:bg-slate-100")}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <Select small className="w-full sm:w-48" value={userId} onChange={setUserId} options={userOpts} placeholder="Todos os usuários" ariaLabel="Filtrar por usuário" />
+          <Select small className="w-full sm:w-44" value={tipo} onChange={setTipo} options={tipoOpts} placeholder="Todos os tipos" ariaLabel="Filtrar por tipo" />
+          <div className="relative min-w-[200px] flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><I.Search size={15} /></span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar no registro…" className={inputCls + " py-2 pl-9 text-xs"} aria-label="Buscar nas atividades" />
+          </div>
+          {hasFilter && (
+            <button type="button" onClick={() => { setUserId(""); setTipo(""); setQ(""); }} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink"><I.X size={13} /> Limpar</button>
+          )}
+          <button type="button" onClick={exportCSV} disabled={!filtered.length} className={btn.secondary + " px-3 py-2 text-xs disabled:opacity-40"}><I.Table size={14} /> Exportar CSV</button>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Uso por usuário" subtitle={"Ações registradas · " + (days ? "últimos " + periodLabel : "todo o período") + ". Clique em alguém para filtrar o registro."} icon={I.Users} />
+        <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 xl:grid-cols-3">
+          {summary.map((s) => {
+            const sel = userId === s.userId;
+            const top = Object.entries(s.porTipo).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            return (
+              <button key={s.userId || "sem"} type="button" onClick={() => setUserId(sel ? "" : s.userId)} aria-pressed={sel}
+                className={"card-hover flex items-start gap-3 rounded-xl border p-3.5 text-left transition " + (sel ? "border-brand bg-brand-50/50" : "border-slate-200 bg-white")}>
+                <Avatar name={s.nome} size={36} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate text-sm font-semibold text-ink">{s.nome}</span>
+                    {s.removido ? <span className="text-[11px] text-slate-400">(removido)</span> : !s.ativo && <span className="text-[11px] font-medium text-red-600">desativado</span>}
+                  </span>
+                  <span className="block text-[11px] text-slate-500 tnum">{s.total} {s.total === 1 ? "ação" : "ações"}{s.ultimo ? " · última " + relTime(s.ultimo) : ""}</span>
+                  <span className="mt-1.5 flex flex-wrap gap-1">
+                    {top.map(([k, n]) => <span key={k} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-medium text-slate-600 tnum">{activityTypeMeta(k).label} · {n}</span>)}
+                    {!top.length && <span className="text-[11px] text-slate-400">Sem atividade no período</span>}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+          {summary.length === 0 && <p className="text-xs text-slate-400 sm:col-span-2 xl:col-span-3">Nenhum usuário cadastrado.</p>}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Registro" icon={I.History}
+          subtitle={filtered.length ? filtered.length + (filtered.length === 1 ? " registro" : " registros") + (filtered.length > shown.length ? " · mostrando " + shown.length : "") : "Nada registrado com esses filtros"} />
+        {groups.length === 0 ? (
+          <EmptyState icon={I.History} title="Nenhuma atividade"
+            text="Conforme o time usa o CRM, tudo o que acontece aparece aqui: entradas, clientes, etapas, tarefas, contatos, notas e configurações." />
+        ) : (
+          <div className="px-5 pb-5 pt-3">
+            {groups.map((g) => (
+              <div key={g.label} className="mb-4 last:mb-0">
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{g.label}</div>
+                <ul className="divide-y divide-slate-100">
+                  {g.items.map((e) => {
+                    const canOpen = !!e.clientId && clientExists(e);
+                    const mn = e.modId ? modName(e.modId) : "";
+                    return (
+                      <li key={e.id} className="flex items-start gap-3 py-2.5">
+                        <span className="w-11 shrink-0 pt-0.5 text-xs tnum text-slate-400">{activityTime(e.at)}</span>
+                        <Avatar name={e.userNome || "?"} size={26} className="mt-px" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="text-sm font-semibold text-ink">{e.userNome || "Usuário removido"}</span>
+                            <ActivityTypeBadge tipo={e.tipo} />
+                            {mn && <span className="text-[11px] text-slate-400">{mn}</span>}
+                          </div>
+                          <div className="mt-0.5 text-sm text-slate-700">
+                            {e.texto}
+                            {e.clientNome && (
+                              <> · {canOpen
+                                ? <button type="button" onClick={() => onOpenIn(e.modId, e.clientId)} className="font-medium text-brand hover:underline">{e.clientNome}</button>
+                                : <span className="font-medium text-slate-500" title="Cliente não existe mais">{e.clientNome}</span>}</>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+            {filtered.length > shown.length && (
+              <div className="pt-2 text-center"><button type="button" onClick={() => setLimit((l) => l + ACTIVITY_PAGE)} className={btn.secondary}>Mostrar mais</button></div>
+            )}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 /* >>> src/99-mount.jsx */
 /* --------------------------------- mount ---------------------------------- */
-/* Backup de emergência: baixa o que está no localStorage (clientes e configurações) como .json,
+/* Backup de emergência: baixa o que está no localStorage (clientes, configurações, usuários e atividades) como .json,
    no mesmo formato que o app importa. Se algum texto estiver ilegível, vai bruto em "raw". */
 function mountExportRawBackup() {
   const read = (k) => { try { return window.localStorage.getItem(k); } catch (e) { return null; } };
-  const payload = { app: "prospera-crm", version: 3, exportedAt: new Date().toISOString(), modules: null, settings: null, raw: {} };
+  const payload = { app: "prospera-crm", version: 5, exportedAt: new Date().toISOString(), modules: null, settings: null, users: null, activity: null, raw: {} };
   const put = (field, key) => {
     const s = read(key);
     if (s == null) return;
@@ -6919,6 +8114,10 @@ function mountExportRawBackup() {
   };
   put("modules", "prospera_crm_v2");
   put("settings", "prospera_crm_settings_v3");
+  put("users", "prospera_crm_users_v5");
+  put("activity", "prospera_crm_activity_v5");
+  if (payload.users == null) delete payload.users;
+  if (payload.activity == null) delete payload.activity;
   if (!Object.keys(payload.raw).length) delete payload.raw;
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });

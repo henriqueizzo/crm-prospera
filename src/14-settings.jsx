@@ -4,7 +4,7 @@
    v4: remover vendedor/origem/motivo avisa o app (onDetachRef), backup registra lastBackupAt,
    "Remover dados de exemplo", importação de planilha CSV e indicador que respeita saveError. */
 const SETTINGS_TABS = [
-  { key: "equipe",     label: "Equipe e metas", icon: "Users",  text: "Vendedores, metas mensais e quem está usando este computador." },
+  { key: "equipe",     label: "Equipe e metas", icon: "Users",  text: "Vendedores, metas mensais e o vendedor vinculado ao seu login." },
   { key: "funil",      label: "Funil",          icon: "Kanban", text: "Prazos por etapa, campos obrigatórios, motivos de perda e origens." },
   { key: "automacoes", label: "Automações",     icon: "Zap",    text: "Tarefas criadas sozinhas quando algo acontece no funil." },
   { key: "templates",  label: "Mensagens",      icon: "Chat",   text: "Modelos de WhatsApp e e-mail para enviar com um clique." },
@@ -155,9 +155,8 @@ function SettingsScoreRow({ label, value, onChange }) {
 }
 
 /* ================================ ABAS ==================================== */
-function SettingsEquipe({ s, patch, allClients, onDetachRef }) {
+function SettingsEquipe({ s, patch, allClients, onDetachRef, currentUser, onGoUsers }) {
   const [draft, setDraft] = useState({ nome: "", meta: 0 });
-  const vendOpts = s.vendedores.map((v) => ({ value: v.id, label: v.nome || "(sem nome)" }));
   const countFor = (id) => allClients.filter((c) => c.responsavel === id).length;
   const updateV = (id, p) => patch({ vendedores: s.vendedores.map((v) => (v.id === id ? { ...v, ...p } : v)) });
   /* Remove da lista (zera "quem sou eu" se era ele) e pede ao app para limpar o responsável nos clientes de todos os módulos. */
@@ -175,14 +174,21 @@ function SettingsEquipe({ s, patch, allClients, onDetachRef }) {
   const meNome = vendedorNome(s, s.usuarioAtual);
   return (
     <div className="space-y-4">
-      <SettingsSection title="Quem está usando este computador" text="Esse vendedor vira o responsável padrão dos novos clientes e o autor das notas que você escrever na ficha.">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          {meNome
-            ? <Avatar name={meNome} size={40} />
-            : <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-400"><I.User size={18} /></span>}
-          <Select className="flex-1" value={s.usuarioAtual} onChange={(v) => patch({ usuarioAtual: v })} options={vendOpts} placeholder="Não definido" ariaLabel="Quem está usando este computador" />
+      {/* v5: "quem sou eu" vem do login (vendedor vinculado ao usuário), não é mais escolhido aqui. */}
+      <SettingsSection title="Você neste CRM" text="Quem entrou e o vendedor vinculado ao login: ele é o responsável padrão dos novos clientes, o autor das notas e o filtro “Só meus”."
+        action={onGoUsers ? <button type="button" onClick={onGoUsers} className={btn.secondary + " shrink-0 px-3 py-2 text-xs"}><I.Shield size={14} /> Usuários</button> : null}>
+        <div className="flex items-center gap-3">
+          <Avatar name={currentUser ? currentUser.nome : (meNome || "?")} size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-ink">
+              {currentUser ? currentUser.nome : "—"}
+              {currentUser && <span className="ml-2 text-xs font-normal text-slate-400">{perfilLabel(currentUser.perfil)}</span>}
+            </div>
+            <div className="text-xs text-slate-500">
+              {meNome ? "Vendedor na equipe: " + meNome : "Sem vendedor vinculado. Peça a um administrador para editar o seu usuário em Usuários."}
+            </div>
+          </div>
         </div>
-        {s.vendedores.length === 0 && <p className="mt-2 text-xs text-slate-400">Cadastre um vendedor abaixo para poder escolher.</p>}
       </SettingsSection>
 
       <SettingsSection title="Vendedores e metas" text="A meta é o valor fechado por mês. O painel mostra o progresso de cada um e o total do time.">
@@ -626,7 +632,7 @@ function SettingsCsvImport({ s, mod, csv, onBack, onImport }) {
   );
 }
 
-function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, onImport, onRemoveDemo, onImportClients, notify }) {
+function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, onImport, onRemoveDemo, onImportClients, notify, users, activity, onLog }) {
   const fileRef = useRef(null);
   const csvRef = useRef(null);
   const [csv, setCsv] = useState(null);   // { name, headers, rows } → abre a sub-tela de importação
@@ -636,13 +642,15 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
   const SheetIcon = I.Spreadsheet || I.Table;
 
   const exportJSON = () => {
-    downloadFile("prospera-crm-backup-" + stamp + ".json", serializeBackup(modules, s), "application/json");
+    downloadFile("prospera-crm-backup-" + stamp + ".json", serializeBackup(modules, s, { users: users || [], activity: activity || [] }), "application/json");
+    onLog && onLog("dados", "Backup exportado (" + totalClients + " cliente(s), " + (users || []).length + " usuário(s))");
     /* Registra o último backup (aviso de backup na sidebar e checklist de primeiros passos). `s` é o settings mais recente. */
     patch({ onboarding: { ...(s.onboarding || {}), lastBackupAt: nowISO() } });
     notify({ title: "Backup exportado", message: "Guarde o arquivo em um lugar seguro." });
   };
   const exportCSV = () => {
     downloadFile("prospera-crm-" + mod.id + "-" + stamp + ".csv", clientsToCSV(mod, s, mod.clients), "text/csv;charset=utf-8");
+    onLog && onLog("dados", "Planilha exportada: " + mod.nome + " (" + mod.clients.length + " cliente(s))");
     notify({ title: "Planilha exportada", message: settingsPlural(mod.clients.length, "cliente", "clientes") + " de " + mod.nome });
   };
   const onFile = (e) => {
@@ -654,7 +662,7 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
         const parsed = JSON.parse(String(reader.result));
         const result = parseBackup(parsed);
         if (!result || !Array.isArray(result.modules) || result.modules.length === 0) throw new Error("formato");
-        onImport({ modules: result.modules, settings: result.settings || null });
+        onImport({ modules: result.modules, settings: result.settings || null, users: result.users || null, activity: result.activity || null });
       } catch (err) {
         notify({ title: "Arquivo inválido", message: "Escolha um backup .json gerado por este CRM.", kind: "error" });
       }
@@ -702,7 +710,7 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
       </SettingsInfo>
 
       <div className="space-y-3">
-        <SettingsBackupRow icon={I.Download} title="Exportar backup completo" text="Arquivo .json com todos os módulos, clientes e configurações (equipe, automações, modelos). Serve para restaurar em outro computador.">
+        <SettingsBackupRow icon={I.Download} title="Exportar backup completo" text="Arquivo .json com todos os módulos, clientes, configurações, usuários (senhas protegidas por hash) e o registro de atividades. Serve para levar o CRM para outro computador.">
           <button type="button" onClick={exportJSON} className={btn.primary}><I.Download size={16} /> Exportar</button>
         </SettingsBackupRow>
         <SettingsBackupRow icon={I.Upload} title="Importar backup" text="Substitui os dados atuais pelos do arquivo .json escolhido. Aceita backups da versão anterior.">
@@ -742,13 +750,17 @@ function SettingsBackup({ s, modules, mod, savedAt, saveError, patch, onReset, o
 
 /* ================================ MODAL =================================== */
 function SettingsModal({ modules, mod, settings, onSaveSettings, savedAt, onClose, onReset, onImport, notify, initialTab,
-                         saveError, onDetachRef, onRemoveDemo, onImportClients }) {
+                         saveError, onDetachRef, onRemoveDemo, onImportClients, users, activity, currentUser, onLog, onGoUsers }) {
   const [tab, setTab] = useState(SETTINGS_TABS.some((t) => t.key === initialTab) ? initialTab : "equipe");
   const [savedTick, setSavedTick] = useState(null);
   useEffect(() => { if (!savedTick) return; const t = setTimeout(() => setSavedTick(null), 2500); return () => clearTimeout(t); }, [savedTick]);
 
   const s = settingsSafe(settings);
-  const patch = (partial) => { onSaveSettings({ ...s, ...partial }); setSavedTick(Date.now()); };
+  const patch = (partial) => {
+    onSaveSettings({ ...s, ...partial }); setSavedTick(Date.now());
+    /* v5: fica no registro de atividades (repetições em 2 min são ignoradas, então digitar não enche a lista). */
+    onLog && onLog("config", "Configurações alteradas: " + (SETTINGS_TABS.find((t) => t.key === tab) || SETTINGS_TABS[0]).label);
+  };
   const allClients = modules.reduce((acc, m) => acc.concat(m.clients || []), []);
   const current = SETTINGS_TABS.find((t) => t.key === tab) || SETTINGS_TABS[0];
   const CurIcon = I[current.icon] || I.Cog;
@@ -807,14 +819,15 @@ function SettingsModal({ modules, mod, settings, onSaveSettings, savedAt, onClos
               <p className="text-xs text-slate-500">{current.text}</p>
             </div>
           </div>
-          {tab === "equipe" && <SettingsEquipe s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} />}
+          {tab === "equipe" && <SettingsEquipe s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} currentUser={currentUser} onGoUsers={onGoUsers} />}
           {tab === "funil" && <SettingsFunil s={s} patch={patch} allClients={allClients} onDetachRef={onDetachRef} />}
           {tab === "automacoes" && <SettingsAutomacoes s={s} patch={patch} />}
           {tab === "templates" && <SettingsTemplates s={s} patch={patch} mod={mod} />}
           {tab === "pontuacao" && <SettingsPontuacao s={s} patch={patch} mod={mod} />}
           {tab === "backup" && (
             <SettingsBackup s={s} modules={modules} mod={mod} savedAt={savedAt} saveError={saveError} patch={patch}
-              onReset={onReset} onImport={onImport} onRemoveDemo={onRemoveDemo} onImportClients={onImportClients} notify={notify} />
+              onReset={onReset} onImport={onImport} onRemoveDemo={onRemoveDemo} onImportClients={onImportClients} notify={notify}
+              users={users} activity={activity} onLog={onLog} />
           )}
         </div>
       </div>

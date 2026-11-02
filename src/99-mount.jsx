@@ -1,9 +1,9 @@
 /* --------------------------------- mount ---------------------------------- */
-/* Backup de emergência: baixa o que está no localStorage (clientes e configurações) como .json,
+/* Backup de emergência: baixa o que está no localStorage (clientes, configurações, usuários e atividades) como .json,
    no mesmo formato que o app importa. Se algum texto estiver ilegível, vai bruto em "raw". */
 function mountExportRawBackup() {
   const read = (k) => { try { return window.localStorage.getItem(k); } catch (e) { return null; } };
-  const payload = { app: "prospera-crm", version: 3, exportedAt: new Date().toISOString(), modules: null, settings: null, raw: {} };
+  const payload = { app: "prospera-crm", version: 5, exportedAt: new Date().toISOString(), modules: null, settings: null, users: null, activity: null, raw: {} };
   const put = (field, key) => {
     const s = read(key);
     if (s == null) return;
@@ -11,6 +11,10 @@ function mountExportRawBackup() {
   };
   put("modules", "prospera_crm_v2");
   put("settings", "prospera_crm_settings_v3");
+  put("users", "prospera_crm_users_v5");
+  put("activity", "prospera_crm_activity_v5");
+  if (payload.users == null) delete payload.users;
+  if (payload.activity == null) delete payload.activity;
   if (!Object.keys(payload.raw).length) delete payload.raw;
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });

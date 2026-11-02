@@ -186,7 +186,7 @@ function Agenda({ allModules, settings, onOpenIn, onToggleTask, onPatchTask, onS
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         <DashChip active={soMeus} onClick={() => onSetSoMeus(!soMeus)} icon={<I.UserCheck size={13} />}
-          title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Defina quem é você em Configurações > Equipe para este filtro funcionar"}>
+          title={settings.usuarioAtual ? "Mostrar só as tarefas dos meus clientes" : "Seu usuário precisa estar vinculado a um vendedor (Usuários) para este filtro funcionar"}>
           Só meus
         </DashChip>
         <span className="hidden h-5 w-px bg-slate-200 sm:block" aria-hidden="true" />
